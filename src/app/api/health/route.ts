@@ -9,6 +9,7 @@ export async function GET() {
     timestamp: new Date().toISOString(),
     endpoints: [
       '/api/flights',
+      '/api/aircraft/photo',
       '/api/satellites',
       '/api/earthquakes',
       '/api/news',

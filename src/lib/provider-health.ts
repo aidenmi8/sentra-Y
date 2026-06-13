@@ -54,6 +54,7 @@ export function buildProviderHealth(env: EnvLike = process.env): ProviderHealthR
       env: [],
       routes: [
         '/api/flights',
+        '/api/aircraft/photo',
         '/api/satellites',
         '/api/earthquakes',
         '/api/fires',

@@ -303,7 +303,35 @@ export default function Dashboard() {
   useEffect(() => {
     (window as any).openSentraIntel = (entity: any) => {
       if (entity?.callsign || entity?.icao24) {
-        setEntityGraphTarget({ type: 'aircraft', id: entity.callsign?.trim() || entity.icao24, label: entity.callsign?.trim() || entity.icao24, properties: { model: entity.model, registration: entity.registration, icao24: entity.icao24 } });
+        const callsign = entity.callsign?.trim();
+        setEntityGraphTarget({
+          type: 'aircraft',
+          id: callsign || entity.registration || entity.icao24,
+          label: callsign || entity.registration || entity.icao24,
+          properties: {
+            callsign,
+            registration: entity.registration,
+            icao24: entity.icao24,
+            model: entity.model,
+            altitude: entity.altitude ?? entity.alt,
+            alt: entity.altitude ?? entity.alt,
+            speedKnots: entity.speedKnots ?? entity.speed_knots ?? entity.speed,
+            speed_knots: entity.speedKnots ?? entity.speed_knots ?? entity.speed,
+            heading: entity.heading,
+            squawk: entity.squawk,
+            category: entity.category,
+            aircraftCategory: entity.aircraftCategory ?? entity.aircraft_category,
+            aircraft_category: entity.aircraftCategory ?? entity.aircraft_category,
+            lat: entity.lat,
+            lng: entity.lng,
+            grounded: entity.grounded,
+            nacP: entity.nacP ?? entity.nac_p,
+            nac_p: entity.nacP ?? entity.nac_p,
+            feedTimestamp: entity.feedTimestamp ?? entity.feed_timestamp,
+            feed_timestamp: entity.feedTimestamp ?? entity.feed_timestamp,
+            source: entity.source,
+          },
+        });
         setShowEntityGraph(true);
       } else if (entity?.type === 'vessel' || entity?.mmsi || entity?.imo) {
         setEntityGraphTarget({ type: 'vessel', id: entity.imo || entity.mmsi || entity.name, label: entity.name || entity.imo, properties: { flag: entity.flag, speed: entity.speed, destination: entity.destination } });

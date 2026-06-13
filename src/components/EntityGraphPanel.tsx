@@ -6,8 +6,15 @@ import dynamic from 'next/dynamic';
 import {
   X, Maximize2, Minimize2, Loader2, AlertTriangle,
   Plane, Ship, Building2, User, Globe, Newspaper, ShieldAlert,
-  RefreshCw, Network, Wifi
+  RefreshCw, Network, Wifi, ExternalLink, Image as ImageIcon
 } from 'lucide-react';
+import {
+  buildAircraftSnapshot,
+  buildAircraftSourceLinks,
+  type AircraftSnapshot,
+  type AircraftTarget,
+} from '@/lib/aircraft-intel';
+import type { AircraftPhotoResult } from '@/lib/aircraft-photo';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -50,6 +57,62 @@ interface Props {
   onClose: () => void;
 }
 
+const AIRCRAFT_REFRESH_MS = 45_000;
+
+function displayText(value: string | number | boolean | null | undefined, fallback = '--'): string {
+  if (value === null || value === undefined || value === '') return fallback;
+  if (typeof value === 'boolean') return value ? 'YES' : 'NO';
+  return String(value);
+}
+
+function formatAltitude(value: number | null): string {
+  return typeof value === 'number' ? `${Math.round(value).toLocaleString()} M` : '--';
+}
+
+function formatSpeed(value: number | null): string {
+  return typeof value === 'number' ? `${Math.round(value).toLocaleString()} KT` : '--';
+}
+
+function formatHeading(value: number | null): string {
+  return typeof value === 'number' ? `${Math.round(value)} DEG` : '--';
+}
+
+function formatCoordinates(snapshot: AircraftSnapshot): string {
+  if (typeof snapshot.lat !== 'number' || typeof snapshot.lng !== 'number') return '--';
+  return `${snapshot.lat.toFixed(4)}, ${snapshot.lng.toFixed(4)}`;
+}
+
+function formatFeedAge(timestamp: string): string {
+  const parsed = Date.parse(timestamp);
+  if (!Number.isFinite(parsed)) return 'UNKNOWN';
+  const seconds = Math.max(0, Math.floor((Date.now() - parsed) / 1000));
+  if (seconds < 90) return `${seconds}S AGO`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 90) return `${minutes}M AGO`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}H AGO`;
+}
+
+function aircraftTargetFromEntity(entity: NonNullable<Props['entity']>): AircraftTarget {
+  const p = entity.properties || {};
+  return {
+    ...p,
+    callsign: p.callsign || entity.label || entity.id,
+    registration: p.registration,
+    icao24: p.icao24 || entity.id,
+    model: p.model,
+  };
+}
+
+function AircraftMetric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[8px] font-mono text-[var(--gold-primary)]/65 uppercase tracking-widest truncate">{label}</div>
+      <div className={`mt-0.5 text-[11px] font-mono truncate ${accent ? 'text-[#00E5FF]' : 'text-white/90'}`}>{value}</div>
+    </div>
+  );
+}
+
 function EntityGraphPanel({ entity, onClose }: Props) {
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
   const [loading, setLoading] = useState(false);
@@ -57,6 +120,10 @@ function EntityGraphPanel({ entity, onClose }: Props) {
   const [selectedNode, setSelectedNode] = useState<EntityNode | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [aircraftSnapshot, setAircraftSnapshot] = useState<AircraftSnapshot | null>(null);
+  const [aircraftRefreshError, setAircraftRefreshError] = useState<string | null>(null);
+  const [aircraftPhoto, setAircraftPhoto] = useState<AircraftPhotoResult | null>(null);
+  const [aircraftPhotoLoading, setAircraftPhotoLoading] = useState(false);
   const graphRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -110,6 +177,84 @@ function EntityGraphPanel({ entity, onClose }: Props) {
     setError(null);
     expandEntity(entity.type, entity.id, entity.properties);
   }, [entity]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!entity || entity.type !== 'aircraft') {
+      queueMicrotask(() => {
+        setAircraftSnapshot(null);
+        setAircraftRefreshError(null);
+        setAircraftPhoto(null);
+      });
+      return;
+    }
+
+    let cancelled = false;
+    const target = aircraftTargetFromEntity(entity);
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setAircraftSnapshot(buildAircraftSnapshot(target, null, null));
+        setAircraftRefreshError(null);
+      }
+    });
+
+    const refreshAircraft = async () => {
+      try {
+        const res = await fetch('/api/flights', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const feed = await res.json();
+        if (cancelled) return;
+        setAircraftSnapshot(prev => buildAircraftSnapshot(target, feed, prev));
+        setAircraftRefreshError(null);
+      } catch (e) {
+        if (cancelled) return;
+        setAircraftSnapshot(prev => buildAircraftSnapshot(target, null, prev));
+        setAircraftRefreshError(e instanceof Error ? e.message : 'Refresh failed');
+      }
+    };
+
+    refreshAircraft();
+    const intervalId = window.setInterval(refreshAircraft, AIRCRAFT_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [entity]);
+
+  useEffect(() => {
+    if (!aircraftSnapshot) {
+      queueMicrotask(() => setAircraftPhoto(null));
+      return;
+    }
+
+    const params = new URLSearchParams();
+    if (aircraftSnapshot.registration) params.set('registration', aircraftSnapshot.registration);
+    if (aircraftSnapshot.model) params.set('model', aircraftSnapshot.model);
+    if (aircraftSnapshot.icao24) params.set('icao24', aircraftSnapshot.icao24);
+    if (!params.toString()) {
+      queueMicrotask(() => setAircraftPhoto(null));
+      return;
+    }
+
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setAircraftPhotoLoading(true);
+    });
+    fetch(`/api/aircraft/photo?${params}`, { cache: 'force-cache' })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!cancelled) setAircraftPhoto(data);
+      })
+      .catch(() => {
+        if (!cancelled) setAircraftPhoto(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAircraftPhotoLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [aircraftSnapshot]);
 
   const handleNodeClick = useCallback((node: any) => {
     const n = node as EntityNode;
@@ -189,6 +334,9 @@ function EntityGraphPanel({ entity, onClose }: Props) {
   }, []);
 
   // Removed early return to allow rendering empty panel
+  const aircraftLinks = aircraftSnapshot ? buildAircraftSourceLinks(aircraftSnapshot) : [];
+  const aircraftStatus = aircraftSnapshot?.stale ? '[ OFF-FEED ]' : '[ LIVE ADS-B ]';
+  const aircraftStatusColor = aircraftSnapshot?.stale ? '#FFB000' : '#00E5FF';
 
   return (
     <AnimatePresence>
@@ -269,6 +417,100 @@ function EntityGraphPanel({ entity, onClose }: Props) {
           <div className="px-6 py-2 bg-[#FF1744]/10 border-b border-[#FF1744]/30 flex items-center gap-2 relative z-20 shadow-[inset_0_0_15px_rgba(255,23,68,0.2)]">
             <AlertTriangle className="w-3.5 h-3.5 text-[#FF1744]" />
             <span className="text-[10px] font-mono font-bold tracking-widest text-[#FF1744] uppercase">[ ERR: {error} ]</span>
+          </div>
+        )}
+
+        {/* AIRCRAFT LIVE TRACK */}
+        {aircraftSnapshot && entity?.type === 'aircraft' && (
+          <div className="px-6 py-4 border-b border-[var(--border-primary)] bg-black/25 relative z-20">
+            <div className="flex gap-4">
+              <div className="w-[112px] h-[78px] shrink-0 border border-[#00E5FF]/30 bg-[#00E5FF]/5 overflow-hidden flex items-center justify-center">
+                {aircraftPhoto?.imageUrl ? (
+                  <div
+                    role="img"
+                    aria-label={`${aircraftSnapshot.registration || aircraftSnapshot.callsign || aircraftSnapshot.model || 'Aircraft'} photo`}
+                    className="w-full h-full bg-cover bg-center"
+                    style={{ backgroundImage: `url(${aircraftPhoto.imageUrl})` }}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-1 text-[#00E5FF]/75">
+                    {aircraftPhotoLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ImageIcon className="w-5 h-5" />}
+                    <Plane className="w-6 h-6" />
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-mono font-bold text-white tracking-[0.14em] uppercase truncate">
+                      {displayText(aircraftSnapshot.callsign || aircraftSnapshot.registration || aircraftSnapshot.icao24)}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[9px] font-mono tracking-widest uppercase">
+                      <span className="text-[var(--gold-primary)]/75">REG {displayText(aircraftSnapshot.registration)}</span>
+                      <span className="text-white/45">ICAO {displayText(aircraftSnapshot.icao24)}</span>
+                    </div>
+                  </div>
+                  <span
+                    className="shrink-0 text-[9px] font-mono font-bold tracking-widest border px-2 py-1"
+                    style={{ color: aircraftStatusColor, borderColor: `${aircraftStatusColor}80`, background: `${aircraftStatusColor}12` }}
+                  >
+                    {aircraftStatus}
+                  </span>
+                </div>
+
+                <div className="mt-3 grid grid-cols-3 gap-x-4 gap-y-2">
+                  <AircraftMetric label="model" value={displayText(aircraftSnapshot.model)} />
+                  <AircraftMetric label="altitude" value={formatAltitude(aircraftSnapshot.altitude)} accent />
+                  <AircraftMetric label="speed" value={formatSpeed(aircraftSnapshot.speedKnots)} />
+                  <AircraftMetric label="heading" value={formatHeading(aircraftSnapshot.heading)} />
+                  <AircraftMetric label="squawk" value={displayText(aircraftSnapshot.squawk)} />
+                  <AircraftMetric label="coords" value={formatCoordinates(aircraftSnapshot)} />
+                  <AircraftMetric label="category" value={displayText(aircraftSnapshot.category || aircraftSnapshot.aircraftCategory)} />
+                  <AircraftMetric label="grounded" value={displayText(aircraftSnapshot.grounded)} />
+                  <AircraftMetric label="nacp" value={displayText(aircraftSnapshot.nacP)} />
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-[9px] font-mono text-white/45 tracking-widest uppercase">
+                LAST SEEN {formatFeedAge(aircraftSnapshot.feedTimestamp)}
+                {aircraftSnapshot.stale && aircraftSnapshot.offFeedSince ? ` // OFF FEED ${formatFeedAge(aircraftSnapshot.offFeedSince)}` : ''}
+              </span>
+              <span className="text-[9px] font-mono text-[var(--gold-primary)]/65 tracking-widest uppercase ml-auto">
+                {aircraftSnapshot.source}
+              </span>
+            </div>
+
+            {aircraftRefreshError && (
+              <div className="mt-2 text-[9px] font-mono text-[#FFB000] tracking-widest uppercase">
+                REFRESH HOLD: {aircraftRefreshError}
+              </div>
+            )}
+
+            {aircraftLinks.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {aircraftLinks.map(link => (
+                  <a
+                    key={link.id}
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 border border-[#00E5FF]/35 bg-[#00E5FF]/10 px-2 py-1 text-[9px] font-mono font-bold uppercase tracking-widest text-[#00E5FF] hover:bg-[#00E5FF]/20 transition-colors"
+                  >
+                    {link.label}
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                ))}
+              </div>
+            )}
+
+            {aircraftPhoto?.sourceUrl && (
+              <div className="mt-2 text-[8px] font-mono text-white/35 truncate">
+                IMAGE: <a href={aircraftPhoto.sourceUrl} target="_blank" rel="noreferrer" className="text-white/50 hover:text-white">Wikimedia Commons</a>
+                {aircraftPhoto.license ? ` // ${aircraftPhoto.license}` : ''}
+              </div>
+            )}
           </div>
         )}
 

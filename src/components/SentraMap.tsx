@@ -583,6 +583,11 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
     };
     const pStyle = `background:rgba(12,14,26,0.95);backdrop-filter:blur(16px);border-radius:10px;padding:16px;font-family:'JetBrains Mono',monospace;`;
     const linkStyle = `display:inline-block;margin-top:8px;padding:5px 12px;font-size:10px;letter-spacing:0.12em;text-decoration:none;border-radius:5px;font-family:'JetBrains Mono',monospace;`;
+    const escapeAttr = (value: string) => value
+      .replace(/&/g, '&amp;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
 
     // ── Flights (with FlightAware + ADS-B Exchange links) ──
     ['fl-commercial','fl-private','fl-jets','fl-military'].forEach(layer => {
@@ -591,6 +596,29 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
         const p = e.features[0].properties as any;
         const coords = (e.features[0].geometry as any).coordinates;
         const cs = (p.callsign||'').trim();
+        const intelPayload = escapeAttr(JSON.stringify({
+          callsign: cs,
+          icao24: p.icao24 || '',
+          model: p.model || '',
+          registration: p.registration || '',
+          altitude: p.altitude ?? p.alt,
+          alt: p.altitude ?? p.alt,
+          speedKnots: p.speedKnots ?? p.speed_knots,
+          speed_knots: p.speedKnots ?? p.speed_knots,
+          heading: p.heading ?? 0,
+          squawk: p.squawk || '',
+          category: p.category || '',
+          aircraftCategory: p.aircraftCategory || p.aircraft_category || '',
+          aircraft_category: p.aircraftCategory || p.aircraft_category || '',
+          lat: p.lat ?? coords[1],
+          lng: p.lng ?? coords[0],
+          grounded: p.grounded === true || p.grounded === 'true',
+          nacP: p.nacP ?? p.nac_p,
+          nac_p: p.nacP ?? p.nac_p,
+          feedTimestamp: p.feedTimestamp || p.feed_timestamp || '',
+          feed_timestamp: p.feedTimestamp || p.feed_timestamp || '',
+          source: p.source || 'ADS-B / adsb.lol',
+        }));
         popup(coords, `<div style="${pStyle}border:1px solid rgba(212,175,55,0.3);">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
             <span style="color:#D4AF37;font-size:16px;font-weight:700;letter-spacing:0.1em;">${cs}</span>
@@ -609,7 +637,7 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
             <a href="https://globe.adsbexchange.com/?icao=${p.icao24||''}" target="_blank" style="${linkStyle}color:#00E5FF;border:1px solid rgba(0,229,255,0.4);background:rgba(0,229,255,0.1);">📡 ADS-B</a>
             <a href="https://www.radarbox.com/data/flights/${cs}" target="_blank" style="${linkStyle}color:#FF69B4;border:1px solid rgba(255,105,180,0.4);background:rgba(255,105,180,0.1);">📍 RADARBOX</a>
           </div>
-          <button onclick="window.openSentraIntel({ callsign: '${cs}', icao24: '${p.icao24||''}', model: '${p.model||''}', registration: '${p.registration||''}' })" style="width:100%;margin-top:8px;padding:6px 12px;background:rgba(212,175,55,0.15);border:1px solid rgba(212,175,55,0.5);color:#D4AF37;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:bold;letter-spacing:0.1em;border-radius:4px;cursor:pointer;">[ DEEP DIVE INTEL ]</button>
+          <button onclick='window.openSentraIntel(${intelPayload})' style="width:100%;margin-top:8px;padding:6px 12px;background:rgba(212,175,55,0.15);border:1px solid rgba(212,175,55,0.5);color:#D4AF37;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:bold;letter-spacing:0.1em;border-radius:4px;cursor:pointer;">[ DEEP DIVE INTEL ]</button>
         </div>`);
       });
       map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
@@ -1054,7 +1082,29 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       }
       return filtered.map((f: any) => ({
         type: 'Feature' as const, geometry: { type: 'Point' as const, coordinates: [f.lng, f.lat] },
-        properties: { callsign: f.callsign, heading: f.heading || 0, alt: f.alt, model: f.model, speed_knots: f.speed_knots, registration: f.registration, icao24: f.icao24 },
+        properties: {
+          callsign: f.callsign,
+          heading: f.heading || 0,
+          altitude: f.alt,
+          alt: f.alt,
+          model: f.model,
+          speedKnots: f.speed_knots,
+          speed_knots: f.speed_knots,
+          registration: f.registration,
+          icao24: f.icao24,
+          squawk: f.squawk,
+          category: f.category,
+          aircraftCategory: f.aircraft_category,
+          aircraft_category: f.aircraft_category,
+          lat: f.lat,
+          lng: f.lng,
+          grounded: f.grounded,
+          nacP: f.nac_p,
+          nac_p: f.nac_p,
+          feedTimestamp: data.timestamp,
+          feed_timestamp: data.timestamp,
+          source: f.source || 'ADS-B / adsb.lol',
+        },
       }));
     };
     setGeo('flights', activeLayers.flights ? toFeatures(data.commercial_flights, 10) : []);
