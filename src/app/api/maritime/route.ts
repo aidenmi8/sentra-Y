@@ -1,8 +1,15 @@
 import { NextResponse } from 'next/server';
 import WebSocket from 'ws';
+import {
+  AIS_SUBSCRIPTION_MESSAGE_TYPES,
+  hasValidAisCoordinates,
+  mergeAisShipUpdate,
+  normalizeAisMessage,
+  type NormalizedAisShipUpdate,
+} from '@/lib/ais';
 
 /**
- * OSIRIS — Maritime Intelligence
+ * Sentra Mi8 — Maritime Intelligence
  * Real-time AIS vessel tracking via aisstream.io + Static global ports.
  */
 
@@ -84,8 +91,15 @@ const CHOKEPOINTS = [
 // For Next.js dev server or Node.js Docker container, this will persist.
 
 const globalForAis = globalThis as unknown as {
-  shipsCache: Map<number, any>;
+  shipsCache: Map<number, CachedAisShip>;
   isAisConnecting: boolean;
+};
+
+type CachedAisShip = NormalizedAisShipUpdate & {
+  id: number;
+  lat: number;
+  lng: number;
+  timestamp: number;
 };
 
 if (!globalForAis.shipsCache) {
@@ -105,7 +119,7 @@ function connectAisStream() {
 
   try {
     ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
-  } catch (e) {
+  } catch {
     globalForAis.isAisConnecting = false;
     return;
   }
@@ -137,53 +151,24 @@ function connectAisStream() {
         // Global fallback (often heavily sampled by aisstream)
         [[-90, -180], [90, 180]]
       ],
-      FilterMessageTypes: ["PositionReport", "ShipStaticData"]
+      FilterMessageTypes: AIS_SUBSCRIPTION_MESSAGE_TYPES
     };
     ws.send(JSON.stringify(subscriptionMessage));
   });
 
-  // Map AIS ship types to OSIRIS categories
-  const getOsirisShipType = (typeCode: number) => {
-    if (!typeCode) return 'cargo';
-    if (typeCode >= 80 && typeCode <= 89) return 'tanker';
-    if (typeCode >= 70 && typeCode <= 79) return 'cargo';
-    if (typeCode === 35) return 'military';
-    return 'cargo';
-  };
-
   ws.on("message", (data) => {
     try {
       const parsed = JSON.parse(data.toString());
-      const mmsi = parsed.MetaData?.MMSI;
-      if (!mmsi) return;
+      const update = normalizeAisMessage(parsed);
+      if (!update) return;
 
-      const existing = shipsCache.get(mmsi) || {
-        id: mmsi, mmsi: mmsi, timestamp: Date.now()
-      };
+      const existing = shipsCache.get(update.mmsi);
+      const merged = mergeAisShipUpdate(existing, update);
+      const ship = { id: update.mmsi, ...merged };
 
-      // Extract Name from MetaData if available (present in most messages)
-      if (parsed.MetaData?.ShipName) {
-        existing.name = parsed.MetaData.ShipName.trim();
-      }
-
-      if (parsed.MessageType === "PositionReport" && parsed.Message?.PositionReport) {
-        const report = parsed.Message.PositionReport;
-        existing.lat = report.Latitude;
-        existing.lng = report.Longitude;
-        existing.speed = report.Sog;
-        existing.heading = report.TrueHeading || report.Cog;
-        existing.timestamp = Date.now();
-      } 
-      else if (parsed.MessageType === "ShipStaticData" && parsed.Message?.ShipStaticData) {
-        const staticData = parsed.Message.ShipStaticData;
-        existing.name = staticData.Name ? staticData.Name.trim() : existing.name;
-        existing.destination = staticData.Destination ? staticData.Destination.trim() : existing.destination;
-        existing.type = getOsirisShipType(staticData.Type);
-      }
-
-      // Only store if we have coordinates
-      if (existing.lat && existing.lng) {
-        shipsCache.set(mmsi, existing);
+      // Return only mappable vessels, but allow static-data updates once a position exists.
+      if (isMappableShip(ship)) {
+        shipsCache.set(update.mmsi, ship);
       }
 
       // Limit cache size to prevent memory leak (allow up to 20,000 ships)
@@ -191,7 +176,7 @@ function connectAisStream() {
         const firstKey = shipsCache.keys().next().value;
         if (firstKey) shipsCache.delete(firstKey);
       }
-    } catch (e) {
+    } catch {
       // ignore parse errors
     }
   });
@@ -210,9 +195,12 @@ function connectAisStream() {
 connectAisStream();
 
 // --- SCM Integration: VesselAPI Hybrid Fallback (Satellite AIS) ---
-let lastVesselApiFetch = 0;
 async function fetchVesselApiFallback() {
   // Mock data removed per user request. We only rely on real live stream data.
+}
+
+function isMappableShip(ship: NormalizedAisShipUpdate & { id: number }): ship is CachedAisShip {
+  return hasValidAisCoordinates(ship.lat, ship.lng) && typeof ship.timestamp === 'number';
 }
 
 export async function GET() {
@@ -254,7 +242,7 @@ export async function GET() {
     const congestionRatio = nearbyCount > 0 ? waitingCount / nearbyCount : 0;
     let congestionStatus = 'NORMAL';
     let estDwellTime = '1-2 Days';
-    
+
     if (congestionRatio > 0.6 || waitingCount > 30) {
       congestionStatus = 'SEVERE';
       estDwellTime = '7+ Days';
@@ -276,7 +264,7 @@ export async function GET() {
     for (let i = 0; i < ships.length; i++) {
       if (getDistanceKm(choke.lat, choke.lng, ships[i].lat, ships[i].lng) < 100) nearbyCount++;
     }
-    
+
     // Dynamically adjust risk based on live ship concentration
     let dynamicRisk = choke.risk;
     if (nearbyCount > 50) dynamicRisk = 'CRITICAL';
@@ -299,7 +287,7 @@ export async function GET() {
     total_ships: ships.length,
     timestamp: new Date().toISOString(),
   }, {
-    headers: { 
+    headers: {
       'Cache-Control': 'no-store, no-cache, must-revalidate',
       'Pragma': 'no-cache'
     },

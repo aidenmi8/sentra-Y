@@ -18,7 +18,7 @@ import { fetchPolandCameras } from './poland';
 import { fetchJapanCameras } from './japan';
 
 /**
- * OSIRIS — Worldwide CCTV Camera API v2
+ * Sentra Mi8 — Worldwide CCTV Camera API v2
  * Viewport-aware: pass ?region=xx to load cameras for specific regions
  * Supports: uk, us-east, us-west, us-central, canada, europe, asia
  * Or pass ?lat=x&lng=y&radius=5 for proximity-based loading
@@ -108,7 +108,7 @@ async function fetchCanadaCameras(): Promise<any[]> {
         const coords = feature.geometry?.coordinates;
         const p = feature.properties;
         if (!coords || !p || !p.IDEcamera) continue;
-        
+
         cams.push({
           id: `quebec511-${p.IDEcamera}`, lat: coords[1], lng: coords[0],
           name: p.DescriptionLocalisationEn || p.DescriptionLocalisationFr || 'Quebec 511 Camera', city: p.NomRegionDiffusion || 'Quebec', country: 'Canada',
@@ -314,7 +314,7 @@ async function fetchAsiaCameras(): Promise<any[]> {
 // ── MIDDLE EAST: Israel, Lebanon ──
 async function fetchMiddleEastCameras(): Promise<any[]> {
   const cams: any[] = [];
-  
+
   // Israel Curated (Embedded)
   cams.push(
     {
@@ -480,8 +480,8 @@ export async function GET(request: Request) {
       }
     }
 
-    const cacheControl = allCameras.length < 50 
-      ? 'no-store, max-age=0' 
+    const cacheControl = allCameras.length < 50
+      ? 'no-store, max-age=0'
       : 'public, s-maxage=300, stale-while-revalidate=600';
 
     return NextResponse.json({

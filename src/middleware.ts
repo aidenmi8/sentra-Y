@@ -2,34 +2,46 @@ import { NextResponse } from 'next/server';
 import type { NextRequest, NextFetchEvent } from 'next/server';
 
 export function middleware(request: NextRequest, event: NextFetchEvent) {
+  const umamiEndpoint = process.env.UMAMI_ENDPOINT?.trim();
+  const websiteId = process.env.UMAMI_WEBSITE_ID?.trim();
+
+  if (!umamiEndpoint || !websiteId) {
+    return NextResponse.next();
+  }
+
   const url = request.nextUrl.pathname;
-  
   const ip = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '127.0.0.1';
-  const userAgent = request.headers.get('user-agent') || 'Unknown OSIRIS Client';
-  
+  const userAgent = request.headers.get('user-agent') || 'Unknown Sentra Mi8 Client';
+
   const basePayload = {
     hostname: request.nextUrl.hostname,
-    language: "en-US",
-    referrer: request.headers.get('referer') || "",
-    screen: "1920x1080",
-    title: "OSIRIS",
-    url: url,
-    website: process.env.UMAMI_WEBSITE_ID || "cd8f216c-fc3f-45f5-ba1a-e10309a61d18"
+    language: 'en-US',
+    referrer: request.headers.get('referer') || '',
+    screen: '1920x1080',
+    title: 'Sentra Mi8',
+    url,
+    website: websiteId,
   };
 
-  const pageView = fetch('http://umami-umami-1:3000/api/send', {
+  const headers = {
+    'Content-Type': 'application/json',
+    'User-Agent': userAgent,
+    'x-forwarded-for': ip,
+  };
+
+  const pageView = fetch(umamiEndpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'User-Agent': userAgent, 'x-forwarded-for': ip },
-    body: JSON.stringify({ payload: basePayload, type: "event" })
+    headers,
+    body: JSON.stringify({ payload: basePayload, type: 'event' }),
   }).catch(() => {});
 
-  const ipEvent = fetch('http://umami-umami-1:3000/api/send', {
+  const ipEvent = fetch(umamiEndpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'User-Agent': userAgent, 'x-forwarded-for': ip },
+    headers,
     body: JSON.stringify({
-      payload: { ...basePayload, name: "Network Log", data: { IP: ip } },
-      type: "event"
-    })
+      payload: { ...basePayload, name: 'Network Log', data: { IP: ip } },
+      type: 'event',
+    }),
   }).catch(() => {});
 
   event.waitUntil(Promise.all([pageView, ipEvent]));
@@ -41,4 +53,4 @@ export const config = {
   matcher: [
     '/((?!api|_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
-}
+};

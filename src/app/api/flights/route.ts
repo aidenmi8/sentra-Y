@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { stealthFetch } from '@/lib/stealthFetch';
 
 /**
- * OSIRIS — Flight Data API
+ * Sentra Mi8 — Flight Data API
  * Fetches real-time aircraft positions from adsb.lol (no API key required)
  * Covers 6 global regions for maximum coverage
  */
@@ -231,8 +231,8 @@ export async function GET() {
     lastFetchTime = Date.now();
     fetchPromise = null;
 
-    const cacheControl = data.total < 100 
-      ? 'no-store, max-age=0' 
+    const cacheControl = data.total < 100
+      ? 'no-store, max-age=0'
       : 'public, s-maxage=30, stale-while-revalidate=60';
 
     return NextResponse.json(data, {

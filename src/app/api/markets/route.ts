@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 
 /**
- * OSIRIS — Financial Markets & Commodities API
+ * Sentra Mi8 — Financial Markets & Commodities API
  * Defense stocks, oil, gold, silver, natural gas, wheat, crypto
  * Multiple source fallback: Yahoo Finance → Google Finance scraping → static estimates
  */
@@ -145,7 +145,7 @@ export async function GET() {
       if (maritimeRes.ok) {
         const maritimeData = await maritimeRes.json();
         const chokepoints = maritimeData.chokepoints || [];
-        
+
         const hormuz = chokepoints.find((c: any) => c.name === 'Strait of Hormuz');
         const suez = chokepoints.find((c: any) => c.name === 'Suez Canal');
         const panama = chokepoints.find((c: any) => c.name === 'Panama Canal');

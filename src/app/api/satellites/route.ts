@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { stealthFetch } from '@/lib/stealthFetch';
 
 /**
- * OSIRIS — Satellite Tracking API
+ * Sentra Mi8 — Satellite Tracking API
  * Fetches TLE data from multiple sources with fallbacks
  * Computes real-time positions using simplified SGP4
  */
@@ -148,7 +148,7 @@ export async function GET() {
           signal: AbortSignal.timeout(15000),
           headers: { 'Accept': 'application/json' },
         });
-        
+
         if (res.ok) {
           const data = await res.json();
           const fetchedSats: any[] = [];
@@ -166,7 +166,7 @@ export async function GET() {
               });
             }
           }
-          
+
           if (fetchedSats.length > 0) {
             globalCachedSats = fetchedSats;
             globalCacheTime = nowTime;
@@ -208,8 +208,8 @@ export async function GET() {
       });
     }
 
-    const cacheControl = satellites.length < 10 
-      ? 'no-store, max-age=0' 
+    const cacheControl = satellites.length < 10
+      ? 'no-store, max-age=0'
       : 'public, s-maxage=120, stale-while-revalidate=300';
 
     return NextResponse.json({

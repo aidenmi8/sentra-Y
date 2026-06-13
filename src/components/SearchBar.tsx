@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Search, X, MapPin } from 'lucide-react';
 
 /* ═══════════════════════════════════════════════════════════════
-   OSIRIS — Search / Locate Bar
+   Sentra Mi8 — Search / Locate Bar
    Coordinate and place name search with geocoding
    ═══════════════════════════════════════════════════════════════ */
 

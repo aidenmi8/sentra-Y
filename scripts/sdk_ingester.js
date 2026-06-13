@@ -1,6 +1,11 @@
 const API_BASE = 'http://localhost:3000/api';
 const INGEST_URL = `${API_BASE}/sdk/ingest`;
-const API_KEY = 'OSIRIS-dev-key';
+const API_KEY = process.env.SDK_INGEST_KEY;
+
+if (!API_KEY) {
+  console.error('SDK_INGEST_KEY is required to run scripts/sdk_ingester.js');
+  process.exit(1);
+}
 
 async function fetchJson(url) {
   try {
@@ -24,13 +29,13 @@ async function postJson(url, payload) {
       body: JSON.stringify(payload)
     });
     return await res.json();
-  } catch (e) {
+  } catch {
     return null;
   }
 }
 
 async function runIngestCycle() {
-  console.log(`[${new Date().toISOString()}] Polling OSIRIS feeds for SDK Ingestion...`);
+  console.log(`[${new Date().toISOString()}] Polling Sentra Mi8 feeds for SDK Ingestion...`);
   try {
     const [flightsRes, maritimeRes] = await Promise.all([
       fetchJson(`${API_BASE}/flights`),
@@ -49,10 +54,10 @@ async function runIngestCycle() {
       ];
       for (const f of allFlights) {
         if (!f.lat || !f.lng) continue;
-        
+
         let threat = 'NONE';
         if (f.type === 'MIL' || f.desc?.includes('Fighter')) threat = 'ELEVATED';
-        
+
         entities.push({
           id: `flight-${f.icao24 || f.hex}`,
           name: f.flight ? f.flight.trim() : (f.callsign || f.r || `AC-${f.icao24}`),
@@ -79,7 +84,7 @@ async function runIngestCycle() {
     if (maritimeRes && Array.isArray(maritimeRes.ships)) {
       for (const v of maritimeRes.ships) {
         if (!v.lat || !v.lng) continue;
-        
+
         entities.push({
           id: `vessel-${v.mmsi}`,
           name: v.name || `VESSEL-${v.mmsi}`,
@@ -109,7 +114,7 @@ async function runIngestCycle() {
         // Prepare IP geoloc batch
         const ipBatch = sansRes.slice(0, 50).map(x => ({ query: x.ip }));
         const geoRes = await postJson('http://ip-api.com/batch', ipBatch);
-        
+
         if (geoRes && Array.isArray(geoRes)) {
           // Major Cloud Hubs
           const dataCenters = [
@@ -119,7 +124,7 @@ async function runIngestCycle() {
             { lat: 1.35, lng: 103.81, name: 'AWS SE-Asia' },
             { lat: -23.55, lng: -46.63, name: 'Azure South America' }
           ];
-          
+
           geoRes.forEach((g, i) => {
             if (g.status === 'success' && g.lat && g.lon) {
               const target = dataCenters[i % dataCenters.length];
@@ -143,13 +148,13 @@ async function runIngestCycle() {
     }
 
     if (entities.length > 0) {
-      console.log(`Pushing ${entities.length} entities to OSIRIS SDK...`);
+      console.log(`Pushing ${entities.length} entities to Sentra Mi8 SDK...`);
       const payload = {
-        source: 'OSIRIS_INGESTER',
+        source: 'SENTRA_MI8_INGESTER',
         apiKey: API_KEY,
         entities: entities
       };
-      
+
       const res = await postJson(INGEST_URL, payload);
       console.log('Ingest Response:', res);
     } else {

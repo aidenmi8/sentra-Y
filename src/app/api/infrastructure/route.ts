@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 /**
- * OSIRIS — Global Infrastructure API
+ * Sentra Mi8 — Global Infrastructure API
  * Tracks critical global infrastructure: Nuclear Power Plants worldwide
  * Comprehensive coverage including all Russian, Chinese, and strategically important facilities
  */
@@ -136,7 +136,7 @@ export async function GET() {
     total: dynamicFacilities.length,
     timestamp: new Date().toISOString(),
   }, {
-    headers: { 
+    headers: {
       'Cache-Control': 'no-store, no-cache, must-revalidate',
       'Pragma': 'no-cache'
     }

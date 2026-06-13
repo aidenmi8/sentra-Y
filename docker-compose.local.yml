@@ -1,0 +1,22 @@
+name: sentra-mi8-local
+
+services:
+  sentra-mi8:
+    image: sentra-mi8:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sentra-mi8-local
+    ports:
+      - "${LOCAL_SENTRA_MI8_PORT:-${LOCAL_OSIRIS_PORT:-3005}}:3000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - NODE_OPTIONS=--dns-result-order=ipv4first
+      - NODE_ENV=production
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

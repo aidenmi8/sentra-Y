@@ -123,7 +123,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
     const isSelected = n === selectedNode;
     const color = TYPE_COLORS[n.type] || '#888';
     const size = isSelected ? 5 : 3.5;
-    
+
     // Clean, precise circle
     ctx.beginPath();
     ctx.arc(n.x!, n.y!, size, 0, 2 * Math.PI);
@@ -149,7 +149,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
       // BR
       ctx.moveTo(n.x! + bSize - bLen, n.y! + bSize); ctx.lineTo(n.x! + bSize, n.y! + bSize); ctx.lineTo(n.x! + bSize, n.y! + bSize - bLen);
       ctx.stroke();
-      
+
       // Faint outer ring
       ctx.beginPath(); ctx.arc(n.x!, n.y!, bSize + 2, 0, 2*Math.PI);
       ctx.strokeStyle = `${color}30`; ctx.lineWidth = 1; ctx.stroke();
@@ -177,12 +177,12 @@ function EntityGraphPanel({ entity, onClose }: Props) {
     ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y);
     // Smooth, thin, non-dashed lines
     ctx.strokeStyle = 'rgba(212,175,55,0.15)'; // faint gold
-    ctx.lineWidth = Math.max(0.5, 1 / globalScale); 
+    ctx.lineWidth = Math.max(0.5, 1 / globalScale);
     ctx.stroke();
-    
+
     const fs = Math.max(8 / globalScale, 2);
     if (fs > 3) {
-      ctx.font = `${fs}px 'JetBrains Mono', monospace`; 
+      ctx.font = `${fs}px 'JetBrains Mono', monospace`;
       ctx.fillStyle = 'rgba(212,175,55,0.4)';
       ctx.textAlign = 'center'; ctx.fillText(link.label || '', (s.x + t.x) / 2, (s.y + t.y) / 2);
     }
@@ -219,7 +219,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
           .hud-tr { top: 12px; right: 12px; border-width: 2px 2px 0 0; }
           .hud-bl { bottom: 12px; left: 12px; border-width: 0 0 2px 2px; }
           .hud-br { bottom: 12px; right: 12px; border-width: 0 2px 2px 0; }
-          
+
           .typewriter {
             display: inline-block; overflow: hidden; white-space: nowrap; border-right: 2px solid var(--gold-primary);
             animation: typing 0.8s steps(30, end) forwards, blink-caret 0.5s step-end infinite;
@@ -227,7 +227,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
           @keyframes typing { from { width: 0 } to { width: 100% } }
           @keyframes blink-caret { from, to { border-color: transparent } 50% { border-color: var(--gold-primary) } }
         `}</style>
-        
+
         <div className="scanline" />
         <div className="hud-corner hud-tl" />
         <div className="hud-corner hud-tr" />
@@ -236,8 +236,8 @@ function EntityGraphPanel({ entity, onClose }: Props) {
         {/* HEADER */}
         <div className="flex items-center justify-between px-6 py-3 border-b border-[var(--border-primary)] bg-[var(--gold-primary)]/5 relative z-20">
           <div className="flex items-center gap-3">
-            <div className="w-1.5 h-1.5 bg-[var(--gold-primary)] animate-osiris-pulse shadow-[0_0_8px_var(--gold-primary)]" />
-            <span className="text-[12px] font-mono font-bold tracking-[0.2em] text-[var(--gold-primary)]">[ OSIRIS // ENTITY INTEL ]</span>
+            <div className="w-1.5 h-1.5 bg-[var(--gold-primary)] animate-sentra-pulse shadow-[0_0_8px_var(--gold-primary)]" />
+            <span className="text-[12px] font-mono font-bold tracking-[0.2em] text-[var(--gold-primary)]">[ SENTRA MI8 // ENTITY INTEL ]</span>
             {loading && <Loader2 className="w-3.5 h-3.5 text-[var(--gold-primary)] animate-spin" />}
           </div>
           <div className="flex items-center gap-2">
@@ -259,7 +259,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
           </div>
         ) : (
           <div className="px-6 py-3 border-b border-[var(--border-primary)] flex items-center gap-3 bg-black/20 relative z-20">
-            <Network className="w-4 h-4 text-[var(--gold-primary)]/50 animate-osiris-pulse" />
+            <Network className="w-4 h-4 text-[var(--gold-primary)]/50 animate-sentra-pulse" />
             <span className="text-xs font-mono text-[var(--gold-primary)]/50 tracking-widest uppercase truncate typewriter">[ AWAITING TARGET LOCK ]</span>
           </div>
         )}
@@ -303,7 +303,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
             >
               <div className="flex items-center justify-between mb-3 border-b border-[var(--border-secondary)] pb-2">
                 <div className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 bg-[var(--gold-primary)] animate-osiris-pulse shadow-[0_0_8px_var(--gold-primary)]" />
+                  <div className="w-1.5 h-1.5 bg-[var(--gold-primary)] animate-sentra-pulse shadow-[0_0_8px_var(--gold-primary)]" />
                   {(() => { const I = TYPE_ICONS[selectedNode.type] || Globe; return <I className="w-4 h-4" style={{ color: TYPE_COLORS[selectedNode.type] }} />; })()}
                   <span className="text-[13px] font-mono font-bold text-white tracking-[0.1em] uppercase">{selectedNode.label}</span>
                 </div>

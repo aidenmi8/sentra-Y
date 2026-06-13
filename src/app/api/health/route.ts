@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 export async function GET() {
   return NextResponse.json({
     status: 'operational',
-    platform: 'OSIRIS',
+    platform: 'Sentra Mi8',
     version: '1.0.0',
     uptime: process.uptime ? Math.round(process.uptime()) : 0,
     timestamp: new Date().toISOString(),
@@ -16,6 +16,7 @@ export async function GET() {
       '/api/markets',
       '/api/frontlines',
       '/api/region-dossier',
+      '/api/provider-health',
     ],
   });
 }

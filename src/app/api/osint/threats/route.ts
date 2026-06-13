@@ -5,12 +5,12 @@ import { isRateLimited, getClientIp } from '@/lib/ssrf-guard';
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const query = searchParams.get('query'); // Optional: IP or domain to check
-  
+
   const clientIp = getClientIp(req);
   if (isRateLimited(clientIp, 20, 60_000)) {
     return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 });
   }
-  
+
   try {
     const results: any = { timestamp: new Date().toISOString() };
 
@@ -39,12 +39,12 @@ export async function GET(req: Request) {
           }));
         }
       }
-    } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); }
+    } catch (e) { console.warn('[Sentra Mi8] Suppressed error:', e instanceof Error ? e.message : e); }
 
     // 2. Check specific IP/domain if provided
     if (query) {
       const isIP = /^(\d{1,3}\.){3}\d{1,3}$/.test(query);
-      
+
       if (isIP) {
         // Check against Tor exit node list
         try {
@@ -73,7 +73,7 @@ export async function GET(req: Request) {
               asn: data.asn,
             };
           }
-        } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); }
+        } catch (e) { console.warn('[Sentra Mi8] Suppressed error:', e instanceof Error ? e.message : e); }
       } else {
         // Domain check
         try {
@@ -91,7 +91,7 @@ export async function GET(req: Request) {
               } : null,
             };
           }
-        } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); }
+        } catch (e) { console.warn('[Sentra Mi8] Suppressed error:', e instanceof Error ? e.message : e); }
       }
     }
 

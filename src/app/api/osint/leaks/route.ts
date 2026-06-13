@@ -9,12 +9,12 @@ export async function GET(req: Request) {
   try {
     // We will call the breach-analytics endpoint to get deep details on what exactly was leaked.
     const res = await fetch(`https://api.xposedornot.com/v1/breach-analytics?email=${encodeURIComponent(email)}`, {
-      headers: { 
+      headers: {
         'Accept': 'application/json',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OSIRIS/1.0'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Sentra Mi8/1.0'
       }
     });
-    
+
     if (res.status === 404) {
       return NextResponse.json({ email, breached: false, breaches: [], data_exposed: [] });
     }
@@ -22,7 +22,7 @@ export async function GET(req: Request) {
     if (!res.ok) throw new Error(`XposedOrNot API HTTP ${res.status}`);
 
     const data = await res.json();
-    
+
     // Parse the analytics data
     let breachList = [];
     const dataExposed = new Set<string>();
@@ -30,7 +30,7 @@ export async function GET(req: Request) {
     if (data.BreachesSummary && data.BreachesSummary.site) {
        breachList = data.BreachesSummary.site.split(';').filter(Boolean);
     }
-    
+
     if (data.ExposedData && Array.isArray(data.ExposedData)) {
        data.ExposedData.forEach((item: any) => {
           if (item.data_classes && Array.isArray(item.data_classes)) {

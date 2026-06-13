@@ -21,7 +21,7 @@ import {
 import type { IntelligenceContext } from '@/lib/ai-engine';
 
 /* ═══════════════════════════════════════════════════════════════
-   OSIRIS — AI Intelligence Analyst Panel
+   Sentra Mi8 — AI Intelligence Analyst Panel
    Premium glass-panel chat interface for real-time intelligence
    analysis powered by Gemini 2.0 Flash
    ═══════════════════════════════════════════════════════════════ */
@@ -102,6 +102,9 @@ interface ChatMessage {
 interface AiAnalystProps {
   data: DashboardData;
 }
+
+const SENTRA_GEMINI_KEY_STORAGE = 'sentra-mi8-gemini-key';
+const DEPRECATED_OSIRIS_GEMINI_KEY_STORAGE = 'osiris-gemini-key';
 
 /* ─────────────────────────────────────────────────────────────
    Helpers
@@ -199,10 +202,12 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load saved key on mount
+  // Load saved key on mount, migrating the deprecated OSIRIS alias if present.
   useEffect(() => {
-    const saved = localStorage.getItem('osiris-gemini-key');
+    const saved = localStorage.getItem(SENTRA_GEMINI_KEY_STORAGE)
+      || localStorage.getItem(DEPRECATED_OSIRIS_GEMINI_KEY_STORAGE);
     if (saved) {
+      localStorage.setItem(SENTRA_GEMINI_KEY_STORAGE, saved);
       setApiKeyInput(saved);
       setKeySaved(true);
     }
@@ -222,7 +227,8 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
 
   const getHeaders = useCallback((): Record<string, string> => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const savedKey = localStorage.getItem('osiris-gemini-key');
+    const savedKey = localStorage.getItem(SENTRA_GEMINI_KEY_STORAGE)
+      || localStorage.getItem(DEPRECATED_OSIRIS_GEMINI_KEY_STORAGE);
     if (savedKey) {
       headers['x-gemini-key'] = savedKey;
     }
@@ -346,14 +352,15 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
   const saveApiKey = useCallback(() => {
     const key = apiKeyInput.trim();
     if (key) {
-      localStorage.setItem('osiris-gemini-key', key);
+      localStorage.setItem(SENTRA_GEMINI_KEY_STORAGE, key);
       setKeySaved(true);
       setTimeout(() => setShowSettings(false), 600);
     }
   }, [apiKeyInput]);
 
   const clearApiKey = useCallback(() => {
-    localStorage.removeItem('osiris-gemini-key');
+    localStorage.removeItem(SENTRA_GEMINI_KEY_STORAGE);
+    localStorage.removeItem(DEPRECATED_OSIRIS_GEMINI_KEY_STORAGE);
     setApiKeyInput('');
     setKeySaved(false);
   }, []);
@@ -445,10 +452,10 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                 <div className="flex items-center gap-2.5">
                   <div className="relative">
                     <Shield className="w-4.5 h-4.5 text-[var(--gold-primary)]" />
-                    <div className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-[var(--alert-green)] animate-osiris-pulse" />
+                    <div className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-[var(--alert-green)] animate-sentra-pulse" />
                   </div>
                   <div className="flex flex-col">
-                    <span className="hud-text text-[11px] text-[var(--text-heading)]">OSIRIS ANALYST</span>
+                    <span className="hud-text text-[11px] text-[var(--text-heading)]">SENTRA MI8 ANALYST</span>
                     <span className="text-[7px] font-mono tracking-[0.2em] text-[var(--text-muted)]">
                       GEMINI 2.0 FLASH • ONLINE
                     </span>
@@ -547,7 +554,7 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                         )}
                       </div>
                       <p className="text-[8px] font-mono text-[var(--text-muted)] leading-relaxed">
-                        Your key is stored locally and sent only to the OSIRIS server. Get a free key at{' '}
+                        Your key is stored locally and sent only to the Sentra Mi8 server. Get a free key at{' '}
                         <a
                           href="https://aistudio.google.com/apikey"
                           target="_blank"
@@ -679,7 +686,7 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                               : 'var(--gold-primary)',
                           }}
                         >
-                          {msg.role === 'user' ? 'OPERATOR' : 'OSIRIS ANALYST'}
+                          {msg.role === 'user' ? 'OPERATOR' : 'SENTRA MI8 ANALYST'}
                         </span>
                         <span className="text-[7px] font-mono text-[var(--text-muted)] ml-auto">
                           {new Date(msg.timestamp).toLocaleTimeString([], {

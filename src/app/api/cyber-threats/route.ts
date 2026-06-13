@@ -10,7 +10,7 @@ export async function GET() {
     // 1. CISA Known Exploited Vulnerabilities (authoritative US govt source)
     try {
       const res = await fetch('https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json', {
-        
+
       });
       if (res.ok) {
         const data = await res.json();
@@ -34,12 +34,12 @@ export async function GET() {
         results.threats.push(...recent);
         results.stats.cisa_total = data.vulnerabilities?.length || 0;
       }
-    } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); }
+    } catch (e) { console.warn('[Sentra Mi8] Suppressed error:', e instanceof Error ? e.message : e); }
 
     // 2. Shadowserver honeypot stats (global attack surface)
     try {
       const res = await fetch('https://dashboard.shadowserver.org/statistics/combined/map/', {
-        
+
         headers: { 'Accept': 'application/json' },
       });
       if (res.ok) {

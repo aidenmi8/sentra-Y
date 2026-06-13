@@ -4,7 +4,7 @@ import { stealthFetch } from '@/lib/stealthFetch';
 export const dynamic = 'force-dynamic';
 
 /**
- * OSIRIS — Real-Time Geopolitical Events (GDELT 2.0 GeoJSON API)
+ * Sentra Mi8 — Real-Time Geopolitical Events (GDELT 2.0 GeoJSON API)
  * Source: GDELT Project — completely free, no auth required
  * Replaces the old RSS scraper with actual GDELT geo-coded events.
  */
@@ -17,7 +17,7 @@ export async function GET() {
       'conflict OR military OR attack OR strike',
       'coup OR revolution OR emergency',
     ];
-    
+
     const allEvents: any[] = [];
     let eventId = 0;
 
@@ -25,7 +25,7 @@ export async function GET() {
       try {
         const encodedQuery = encodeURIComponent(query);
         const url = `https://api.gdeltproject.org/api/v2/geo/geo?query=${encodedQuery}&format=GeoJSON&timespan=24h&maxpoints=100`;
-        
+
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 5000);
 
@@ -49,7 +49,7 @@ export async function GET() {
           const url = props.url || props.shareimage || '';
 
           // Deduplicate by proximity (within 0.5 degrees)
-          const isDupe = allEvents.some(e => 
+          const isDupe = allEvents.some(e =>
             Math.abs(e.lat - coords[1]) < 0.5 && Math.abs(e.lng - coords[0]) < 0.5 && e.name === name
           );
           if (isDupe) continue;
@@ -88,7 +88,7 @@ export async function GET() {
           });
         }
       };
-      
+
       // Inject simulated incidents across key regions
       generateFallback('conflict', 'Military strikes', 15, 48.5, 31.2, 5); // Ukraine
       generateFallback('conflict', 'Armed clashes', 10, 31.5, 34.5, 2); // Gaza
@@ -104,12 +104,12 @@ export async function GET() {
       events: allEvents,
       total: allEvents.length,
       timestamp: new Date().toISOString(),
-      source: allEvents[0]?.id?.includes('fb') ? 'OSIRIS Simulated Incident Engine' : 'GDELT 2.0 GeoJSON API',
+      source: allEvents[0]?.id?.includes('fb') ? 'Sentra Mi8 Simulated Incident Engine' : 'GDELT 2.0 GeoJSON API',
     }, {
       headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' },
     });
   } catch (error) {
-    console.error('[OSIRIS] GDELT fetch error:', error);
+    console.error('[Sentra Mi8] GDELT fetch error:', error);
     return NextResponse.json({ events: [], total: 0, error: 'GDELT unavailable' }, { status: 500 });
   }
 }

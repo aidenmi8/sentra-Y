@@ -1,5 +1,5 @@
 # Goal Description
-Build an Entity Graph intelligence layer ("Palantir-style ontology") that links disparate map entities (aircraft, vessels, organizations, people) across feeds, but do so using a **100% Open-Source and Self-Hosted Architecture**. 
+Build an Entity Graph intelligence layer ("Palantir-style ontology") that links disparate map entities (aircraft, vessels, organizations, people) across feeds, but do so using a **100% Open-Source and Self-Hosted Architecture**.
 
 Instead of relying on third-party SaaS APIs that have rate limits or require paid keys, we will spin up local intelligence containers that hold bulk data, and aggressively cache external queries using your existing Nginx infrastructure.
 
@@ -13,7 +13,7 @@ Instead of relying on third-party SaaS APIs that have rate limits or require pai
 ## Open Questions
 > [!WARNING]
 > 1. Do you want the Entity Graph panel to replace the existing OSINT panel when an entity is clicked, or should they be separate tabs/panels?
-> 2. We already have an `osiris-cache` Nginx container. I plan to modify this Nginx configuration to also cache our outgoing intelligence queries (e.g. Wikidata). Does this align with your vision for the "Self Hosted intelligence sector that also gets caches"?
+> 2. We already have an `sentra-mi8-cache` Nginx container. I plan to modify this Nginx configuration to also cache our outgoing intelligence queries (e.g. Wikidata). Does this align with your vision for the "Self Hosted intelligence sector that also gets caches"?
 
 ## Proposed Changes
 
@@ -21,14 +21,14 @@ Instead of relying on third-party SaaS APIs that have rate limits or require pai
 
 ### Backend / Infrastructure (Self-Hosted Intelligence Sector)
 
-#### [MODIFY] [docker-compose.yml](file:///c:/Users/mrads/.gemini/antigravity/playground/osiris/docker-compose.yml)
+#### [MODIFY] [docker-compose.yml](file:///c:/Users/mrads/.gemini/antigravity/playground/sentra-Y/docker-compose.yml)
 - **Add Yente Service:** Add `ghcr.io/opensanctions/yente:latest`. Yente is the official open-source, self-hosted API engine for OpenSanctions. It automatically downloads the latest global sanctions and corporate data and serves it locally, meaning we have **zero rate limits** and no external tracking.
 - **Connect Network:** Ensure Next.js can communicate internally with Yente on `http://yente:8000`.
 
-#### [MODIFY] [nginx/nginx.conf](file:///c:/Users/mrads/.gemini/antigravity/playground/osiris/nginx/nginx.conf)
+#### [MODIFY] [nginx/nginx.conf](file:///c:/Users/mrads/.gemini/antigravity/playground/sentra-Y/nginx/nginx.conf)
 - **Add OSINT Cache Layer:** Configure the existing Nginx container to act as an aggressive forward-cache proxy for external OSINT queries (like Wikidata SPARQL or public ICAO registries). When an entity is queried once, Nginx will cache the ontology data locally so subsequent expansions are instant and don't hit external rate limits.
 
-#### [NEW] [route.ts](file:///c:/Users/mrads/.gemini/antigravity/playground/osiris/src/app/api/entity/expand/route.ts)
+#### [NEW] [route.ts](file:///c:/Users/mrads/.gemini/antigravity/playground/sentra-Y/src/app/api/entity/expand/route.ts)
 - Create the ontology resolver endpoint inside Next.js.
 - **Resolver Logic (Fully Local):**
   - Next.js receives a request to expand an entity (e.g., an IMO number or Company name).
@@ -40,16 +40,16 @@ Instead of relying on third-party SaaS APIs that have rate limits or require pai
 
 ### Frontend UI
 
-#### [NEW] [EntityGraphPanel.tsx](file:///c:/Users/mrads/.gemini/antigravity/playground/osiris/src/components/EntityGraphPanel.tsx)
+#### [NEW] [EntityGraphPanel.tsx](file:///c:/Users/mrads/.gemini/antigravity/playground/sentra-Y/src/components/EntityGraphPanel.tsx)
 - Create a new sliding side-panel for the UI.
 - Integrate `react-force-graph-2d` (which uses `d3-force` internally and is already in `package.json`) to render a dynamic, force-directed mini-graph of nodes and links.
 - Clicking a node in the graph triggers a recursive fetch to the local `/api/entity/expand` endpoint to branch out the ontology.
 
-#### [MODIFY] [page.tsx](file:///c:/Users/mrads/.gemini/antigravity/playground/osiris/src/app/page.tsx)
+#### [MODIFY] [page.tsx](file:///c:/Users/mrads/.gemini/antigravity/playground/sentra-Y/src/app/page.tsx)
 - Add state for `activeEntityGraph` (node data and links).
 - Update the `handleEntityClick` callback to set the `activeEntity` and open the `EntityGraphPanel`.
 
-#### [MODIFY] [OsirisMap.tsx](file:///c:/Users/mrads/.gemini/antigravity/playground/osiris/src/components/OsirisMap.tsx)
+#### [MODIFY] [SentraMap.tsx](file:///c:/Users/mrads/.gemini/antigravity/playground/sentra-Y/src/components/SentraMap.tsx)
 - Ensure all clickable layers pass a structured object to `onEntityClick` containing `{ type: 'aircraft', id: 'callsign/tail' }` or `{ type: 'vessel', id: 'IMO' }`.
 
 ## Verification Plan

@@ -31,7 +31,7 @@ const getLayerGroups = (theme: 'core' | 'ghost') => {
   return [
   {
     label: 'SDK',
-    fullLabel: 'OSIRIS SDK',
+    fullLabel: 'SENTRA MI8 SDK',
     color: '#1565C0',
     layers: [
       { key: 'sdk_sea', label: 'Maritime Lines', icon: Anchor, color: '#4FC3F7', dataKey: 'sdk_entities' },
@@ -123,7 +123,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
   const ALL_LAYERS = LAYER_GROUPS.flatMap(g => g.layers);
 
   const toggle = (key: string) => setActiveLayers((prev: any) => ({ ...prev, [key]: !prev[key] }));
-  
+
   const getCount = (dk: string): number | null => {
     if (!dk) return null;
     let total = 0;
@@ -142,7 +142,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
       <div className="flex flex-col gap-4 py-2">
         {LAYER_GROUPS.map((group) => (
           <div key={group.label} className="flex flex-col gap-2">
-            <div 
+            <div
               className="text-[10px] font-bold font-mono tracking-widest border-b border-white/10 pb-1"
               style={{ color: group.color }}
             >
@@ -152,7 +152,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
               {group.layers.map((layer) => {
                 const isLayerActive = activeLayers[layer.key];
                 const count = getCount(layer.dataKey);
-                
+
                 return (
                   <button
                     key={layer.key}
@@ -164,12 +164,12 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
                       }
                     }}
                     className={`flex items-center gap-2 px-2 py-2 rounded border transition-colors ${
-                      isLayerActive 
-                        ? 'bg-white/10 border-white/20' 
+                      isLayerActive
+                        ? 'bg-white/10 border-white/20'
                         : 'bg-transparent border-white/5 hover:border-white/10'
                     }`}
                   >
-                    <div 
+                    <div
                       className={`w-2 h-2 rounded-full border flex-shrink-0 transition-all ${
                         isLayerActive ? 'bg-current border-current scale-100' : 'bg-transparent border-white/30 scale-75'
                       }`}
@@ -205,7 +205,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
                 boxShadow: theme === 'ghost' ? '0 0 15px rgba(179, 136, 255, 0.3), inset 0 0 8px rgba(179, 136, 255, 0.2)' : 'inset 0 0 5px rgba(0,0,0,0.5)'
               }}
             >
-              <motion.div 
+              <motion.div
                 layout
                 className="w-4 h-4 rounded-full"
                 style={{
@@ -224,14 +224,14 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
   }
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ x: -100, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       transition={{ type: 'spring', damping: 25, stiffness: 200 }}
       className="absolute top-0 left-0 h-full w-[80px] border-r border-[var(--border-primary)] flex flex-col pt-32 pb-8 z-50 pointer-events-auto bg-[var(--bg-panel)] backdrop-blur-[24px] saturate-150"
       style={{ boxShadow: '4px 0 24px rgba(0,0,0,0.5)' }}
     >
-      
+
       <div className="flex-1 flex flex-col gap-8 px-2">
         {LAYER_GROUPS.map((group) => {
           const groupActiveCount = group.layers.filter(l => activeLayers[l.key]).length;
@@ -239,14 +239,14 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
           const isHovered = hoveredGroup === group.label;
 
           return (
-            <div 
-              key={group.label} 
+            <div
+              key={group.label}
               className="relative flex justify-center items-center"
               onMouseEnter={() => setHoveredGroup(group.label)}
               onMouseLeave={() => setHoveredGroup(null)}
             >
               {/* The Vertical Label */}
-              <div 
+              <div
                 className={`text-[10px] font-mono font-bold cursor-pointer select-none transition-all duration-300 flex items-center justify-center`}
                 style={{
                   writingMode: 'horizontal-tb',
@@ -258,7 +258,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
               >
                 {/* Active Indicator dot */}
                 {isActive && (
-                  <div 
+                  <div
                     className="absolute -left-1 w-1 h-1 rounded-full animate-pulse"
                     style={{ backgroundColor: group.color, boxShadow: `0 0 8px ${group.color}` }}
                   />
@@ -287,7 +287,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
                         const isLayerActive = activeLayers[layer.key];
                         const count = getCount(layer.dataKey);
                         const Icon = layer.icon || Shield;
-                        
+
                         return (
                           <button
                             key={layer.key}
@@ -300,7 +300,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
                             }}
                             className="w-full flex items-center gap-3 px-2 py-1.5 rounded bg-transparent hover:bg-white/5 transition-colors group"
                           >
-                            <div 
+                            <div
                               className={`w-2 h-2 rounded-full border flex-shrink-0 transition-all duration-300 ${isLayerActive ? 'bg-current border-current scale-100' : 'bg-transparent border-white/30 scale-75'}`}
                               style={{ color: isLayerActive ? layer.color : 'inherit', boxShadow: isLayerActive ? `0 0 8px ${layer.color}` : 'none' }}
                             />
@@ -337,7 +337,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
               boxShadow: theme === 'ghost' ? '0 0 15px rgba(179, 136, 255, 0.3), inset 0 0 8px rgba(179, 136, 255, 0.2)' : 'inset 0 0 5px rgba(0,0,0,0.5)'
             }}
           >
-            <motion.div 
+            <motion.div
               layout
               className="w-5 h-5 rounded-full"
               style={{

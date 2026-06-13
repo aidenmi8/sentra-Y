@@ -1,12 +1,19 @@
 {
-  "name": "osiris",
+  "name": "sentra-mi8",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "npm run test:branding && npm run test:iptv && npm run test:ais && npm run test:entity-intel && npm run test:provider-health",
+    "test:branding": "node scripts/check-branding.mjs",
+    "test:iptv": "node scripts/test-iptv-parser.mjs",
+    "test:ais": "node scripts/test-ais-parser.mjs",
+    "test:entity-intel": "node scripts/test-entity-intel.mjs",
+    "test:provider-health": "node scripts/test-provider-health.mjs",
+    "brand:assets": "node scripts/generate-brand-assets.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

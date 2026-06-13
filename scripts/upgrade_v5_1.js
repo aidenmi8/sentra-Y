@@ -1,7 +1,7 @@
 /**
- * OSIRIS v5.1 — Final Senior Engineer Refinements (Reconstructed)
+ * Sentra Mi8 v5.1 — Final Senior Engineer Refinements (Reconstructed)
  * ═════════════════════════════════════════════════
- * 
+ *
  * 1. Use TeleGeography's own cable colors (from data) for rendering
  * 2. Fix cable popup: deep-link to specific cable on submarinecablemap.com
  * 3. Register ALL cable layers for click/hover
@@ -13,9 +13,9 @@
 const fs = require('fs');
 
 // ═══════════════════════════════════════════════════════
-// 1. UPGRADE OsirisMap.tsx — Full cable rendering overhaul
+// 1. UPGRADE SentraMap.tsx — Full cable rendering overhaul
 // ═══════════════════════════════════════════════════════
-let map = fs.readFileSync('src/components/OsirisMap.tsx', 'utf8');
+let map = fs.readFileSync('src/components/SentraMap.tsx', 'utf8');
 
 // 1a. Replace cable rendering to use each cable's own TeleGeography color
 const oldCableLayers = `// ══ SUBMARINE CABLES — TeleGeography real-world data ══
@@ -62,7 +62,7 @@ const newCableLayers = `// ══ SUBMARINE CABLES — TeleGeography real-world 
           'line-opacity': ['interpolate',['linear'],['zoom'], 1, 0.08, 3, 0.15, 6, 0.25, 10, 0.4],
         }});
         // Layer 4: Cable name labels (visible at zoom >= 4)
-        map.addLayer({ id: 'submarine-cables-label', type: 'symbol', source: 'submarine-cables', 
+        map.addLayer({ id: 'submarine-cables-label', type: 'symbol', source: 'submarine-cables',
           minzoom: 4,
           layout: {
             'symbol-placement': 'line-center',
@@ -82,9 +82,9 @@ const newCableLayers = `// ══ SUBMARINE CABLES — TeleGeography real-world 
 
 if (map.includes(oldCableLayers)) {
   map = map.replace(oldCableLayers, newCableLayers);
-  console.log('[OsirisMap.tsx] ✓ Upgraded cable rendering to color-coded 4-layer stack with labels');
+  console.log('[SentraMap.tsx] ✓ Upgraded cable rendering to color-coded 4-layer stack with labels');
 } else {
-  console.log('[OsirisMap.tsx] ✗ Could not find old cable layers to replace');
+  console.log('[SentraMap.tsx] ✗ Could not find old cable layers to replace');
 }
 
 // 1b. Add label layer to visibility toggle
@@ -92,7 +92,7 @@ const oldVis = "setVis(['submarine-cables-halo', 'submarine-cables-glow', 'subma
 const newVis = "setVis(['submarine-cables-halo', 'submarine-cables-glow', 'submarine-cables-line', 'submarine-cables-label'], activeLayers.cables);";
 if (map.includes(oldVis)) {
   map = map.replace(oldVis, newVis);
-  console.log('[OsirisMap.tsx] ✓ Added label layer to visibility toggle');
+  console.log('[SentraMap.tsx] ✓ Added label layer to visibility toggle');
 }
 
 // 1c. Upgrade cable popup to deep-link to TeleGeography
@@ -101,16 +101,16 @@ const newPopup = `['submarine-cables-line', 'submarine-cables-glow', 'submarine-
       map.on('click', cableLayer, e => {`;
 if (map.includes(oldPopup)) {
   map = map.replace(oldPopup, newPopup);
-  
+
   // Find the closing of the click handler and add the forEach closing
   const popupEndOld = "const name = p.name || p.Name || 'Unknown Cable';";
   const popupEndNew = `const name = p.name || p.Name || 'Unknown Cable';
         const cableId = p.id || '';
         const cableColor = p.color || '#4FC3F7';`;
   map = map.replace(popupEndOld, popupEndNew);
-  
+
   // Update the popup HTML to use deep-link and cable color
-  const oldHtml = `<div style=\"\${pStyle}border:1px solid rgba(79,195,247,0.4);\">`; 
+  const oldHtml = `<div style=\"\${pStyle}border:1px solid rgba(79,195,247,0.4);\">`;
   const newHtml = `<div style=\"\${pStyle}border:1px solid \${cableColor}40;\">`;
   if (map.includes(oldHtml)) {
     map = map.replace(oldHtml, newHtml);
@@ -124,8 +124,8 @@ if (map.includes(oldPopup)) {
       "https://www.submarinecablemap.com/submarine-cable/\${cableId}"
     );
   }
-  
-  console.log('[OsirisMap.tsx] ✓ Upgraded cable popup: all 3 layers clickable, deep-linked to TeleGeography');
+
+  console.log('[SentraMap.tsx] ✓ Upgraded cable popup: all 3 layers clickable, deep-linked to TeleGeography');
 }
 
 // 1d. Add cable layers to hover cursor list
@@ -135,10 +135,10 @@ if (map.includes(hoverListPattern) && !map.includes("'submarine-cables-line','su
     hoverListPattern,
     "'scan-targets-dots','submarine-cables-line','submarine-cables-glow','submarine-cables-halo','sdk-sea','sdk-sea-glow'"
   );
-  console.log('[OsirisMap.tsx] ✓ Added cable layers to hover cursor list');
+  console.log('[SentraMap.tsx] ✓ Added cable layers to hover cursor list');
 }
 
-fs.writeFileSync('src/components/OsirisMap.tsx', map);
+fs.writeFileSync('src/components/SentraMap.tsx', map);
 
 // ═══════════════════════════════════════════════════════
 // 2. ENRICH cables.json with segment counts
@@ -147,7 +147,7 @@ try {
   const cablesData = JSON.parse(fs.readFileSync('public/data/submarine-cables.json', 'utf8'));
   const cableNames = new Set();
   cablesData.features.forEach(f => { if (f.properties?.name) cableNames.add(f.properties.name); });
-  
+
   // Add segment_count to each feature
   const nameCounts = {};
   cablesData.features.forEach(f => {
@@ -159,7 +159,7 @@ try {
       f.properties.segments = nameCounts[f.properties.name];
     }
   });
-  
+
   fs.writeFileSync('public/data/submarine-cables.json', JSON.stringify(cablesData));
   console.log(`[cables.json] ✓ Enriched with segment counts for ${cableNames.size} unique cables`);
 } catch(e) {
@@ -168,6 +168,6 @@ try {
 
 console.log(`
 ══════════════════════════════════════
-  OSIRIS v5.1 Final Refinements Done
+  Sentra Mi8 v5.1 Final Refinements Done
 ══════════════════════════════════════
 `);

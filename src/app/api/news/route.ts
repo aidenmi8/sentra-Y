@@ -1,18 +1,14 @@
 import { NextResponse } from 'next/server';
 import crypto from 'crypto';
+import { parseTelegramChannels } from '@/lib/provider-health';
 
 /**
- * OSIRIS — Military-Grade Intelligence API
- * Fetches Telegram OSINT feeds directly, with a failsafe fallback 
+ * Sentra Mi8 — Military-Grade Intelligence API
+ * Fetches Telegram OSINT feeds directly, with a failsafe fallback
  * to traditional intelligence sources if Telegram blocks the IP.
  */
 
-const TELEGRAM_CHANNELS = [
-  'OSINTtechnical',
-  'Faytuks',
-  'Liveuamap',
-  'CyberKnow'
-];
+const TELEGRAM_CHANNELS = parseTelegramChannels();
 
 const FALLBACK_FEEDS = {
   BBC: 'https://feeds.bbci.co.uk/news/world/rss.xml',
@@ -29,6 +25,14 @@ const KEYWORD_COORDS: Record<string, [number, number]> = {
   'yemen': [15.552, 48.516], 'china': [35.861, 104.195], 'taiwan': [23.697, 120.960],
   'united states': [38.907, -77.036], 'europe': [48.800, 2.300], 'middle east': [31.500, 34.800]
 };
+
+interface SourceArticle {
+  title: string;
+  description: string;
+  link: string;
+  pubDate: string;
+  source: string;
+}
 
 function scoreRisk(text: string): number {
   const lower = text.toLowerCase();
@@ -47,8 +51,8 @@ function findCoords(text: string): [number, number] | null {
   return null;
 }
 
-function parseTelegramHTML(html: string, channel: string): any[] {
-  const items: any[] = [];
+function parseTelegramHTML(html: string, channel: string): SourceArticle[] {
+  const items: SourceArticle[] = [];
   const messageBlockRegex = /<div class="tgme_widget_message_wrap js-widget_message_wrap"[\s\S]*?<\/div>\s*<\/div>\s*<\/div>/gi;
   let blockMatch;
 
@@ -57,7 +61,7 @@ function parseTelegramHTML(html: string, channel: string): any[] {
     const textRegex = /<div class="tgme_widget_message_text[^>]*>([\s\S]*?)<\/div>/i;
     const textMatch = blockHtml.match(textRegex);
     if (!textMatch) continue;
-    
+
     const text = textMatch[1].replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim();
     if (!text || text.length < 10) continue;
 
@@ -73,8 +77,8 @@ function parseTelegramHTML(html: string, channel: string): any[] {
   return items;
 }
 
-function parseRSSItems(xml: string, sourceName: string): any[] {
-  const items: any[] = [];
+function parseRSSItems(xml: string, sourceName: string): SourceArticle[] {
+  const items: SourceArticle[] = [];
   const itemRegex = /<item>([\s\S]*?)<\/item>/gi;
   let match;
 
@@ -87,7 +91,7 @@ function parseRSSItems(xml: string, sourceName: string): any[] {
 
     const title = getTag('title').replace(/<[^>]+>/g, '');
     const desc = getTag('description').replace(/<[^>]+>/g, '').replace(/&quot;/g, '"');
-    
+
     items.push({
       title: title.length > 100 ? title.substring(0, 100) + '...' : title,
       description: desc,
@@ -103,9 +107,9 @@ export async function GET() {
   try {
     const feedPromises = TELEGRAM_CHANNELS.map(async (channel) => {
       try {
-        const res = await fetch(`https://t.me/s/${channel}`, { 
-          signal: AbortSignal.timeout(8000), 
-          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' } 
+        const res = await fetch(`https://t.me/s/${channel}`, {
+          signal: AbortSignal.timeout(8000),
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
         });
         if (!res.ok) return [];
         const html = await res.text();
@@ -114,7 +118,7 @@ export async function GET() {
     });
 
     const feedResults = await Promise.allSettled(feedPromises);
-    const allArticles: any[] = [];
+    const allArticles: SourceArticle[] = [];
 
     for (const result of feedResults) {
       if (result.status === 'fulfilled') allArticles.push(...result.value);
@@ -130,7 +134,7 @@ export async function GET() {
           return parseRSSItems(xml, source).slice(0, 5);
         } catch { return []; }
       });
-      
+
       const fallbackResults = await Promise.allSettled(fallbackPromises);
       for (const result of fallbackResults) {
         if (result.status === 'fulfilled') allArticles.push(...result.value);
@@ -166,7 +170,7 @@ export async function GET() {
         'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=120',
       },
     });
-  } catch (error) {
+  } catch {
     return NextResponse.json({ news: [], error: 'Failed to fetch intel' }, { status: 500 });
   }
 }
