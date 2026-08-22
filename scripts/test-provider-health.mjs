@@ -39,7 +39,11 @@ assert.equal(byId.get('scanner')?.state, 'disabled');
 assert.equal(byId.get('sdk-ingest')?.state, 'missing_optional');
 assert.equal(byId.get('github-webhook')?.state, 'disabled');
 assert.equal(byId.get('umami')?.state, 'disabled');
-assert.equal(byId.get('opensky')?.state, 'planned');
+assert.equal(byId.get('opensky')?.state, 'missing_optional');
+assert.equal(byId.get('adsb-lol')?.state, 'keyless');
+assert.equal(byId.get('submarine-cables')?.state, 'keyless');
+assert.equal(byId.get('osm-surveillance')?.state, 'keyless');
+assert.equal(byId.get('windy-webcams')?.state, 'missing_optional');
 assert.equal(byId.get('n2yo')?.state, 'planned');
 assert.equal(byId.get('firms-keyed')?.state, 'planned');
 
@@ -59,12 +63,15 @@ const configuredHealth = buildProviderHealth({
   UMAMI_ENDPOINT: 'http://umami:3000/api/send',
   UMAMI_WEBSITE_ID: configuredSecret,
   IPTV_ORG_BASE_URL: 'https://iptv-org.github.io',
+  OPENSKY_CLIENT_ID: configuredSecret,
+  OPENSKY_CLIENT_SECRET: configuredSecret,
+  WINDY_API_KEY: configuredSecret,
   SENTRA_MI8_INTEL_URL: 'http://sentra-mi8-intel:4000',
   SENTRA_MI8_TELEGRAM_CHANNELS: 'OSINTtechnical,Faytuks',
 });
 
 const configuredById = new Map(configuredHealth.providers.map((provider) => [provider.id, provider]));
-for (const id of ['gemini', 'aisstream', 'scanner', 'sdk-ingest', 'github-webhook', 'umami', 'iptv-org', 'intel-service', 'telegram-osint']) {
+for (const id of ['gemini', 'aisstream', 'scanner', 'sdk-ingest', 'github-webhook', 'umami', 'iptv-org', 'opensky', 'windy-webcams', 'intel-service', 'telegram-osint']) {
   assert.equal(configuredById.get(id)?.state, 'configured', `${id} should be configured`);
 }
 assert.equal(configuredById.get('gemini')?.message.includes('2'), true);

@@ -28,15 +28,61 @@
   --cyan-dim: #006B7A;
   --cyan-glow: rgba(var(--cyan-rgb), 0.15);
 
-  /* ── Alert Colors ── */
+  /* ── Alert Colors (UI chrome — these follow the theme) ── */
   --alert-red: #FF3D3D;
   --alert-orange: #FF9500;
   --alert-green: #00E676;
   --alert-blue: #448AFF;
+  --alert-red-rgb: 255, 61, 61;
+  --alert-orange-rgb: 255, 149, 0;
+  --alert-green-rgb: 0, 230, 118;
+
+  /* ── Severity Encoding (meaning, not brand — identical in every theme) ──
+     Risk badges, earthquake magnitude, chokepoint risk and threat levels use
+     these. Recolouring them per theme would destroy the encoding. */
+  --severity-critical: #D32F2F;
+  --severity-high: #E65100;
+  --severity-elevated: #F9A825;
+  --severity-nominal: #26A69A;
+  --severity-critical-rgb: 211, 47, 47;
+  --severity-high-rgb: 230, 81, 0;
+  --severity-elevated-rgb: 249, 168, 37;
+  --severity-nominal-rgb: 38, 166, 154;
 
   /* ── Accent Colors (layer-specific) ── */
   --accent-weather: #E040FB;
   --accent-nuclear: #76FF03;
+
+  /* ── Surfaces ──
+     Replaces the warm-grey literals (#0A0A09, #111111, #1A1A18, #2A2A28,
+     #3A3A38) that had no token behind them and stayed olive in ghost mode. */
+  --surface-0: #0A0A09;
+  --surface-1: #131316;
+  --surface-2: #1F1F22;
+  --surface-3: #2A2A2E;
+  --surface-line: #3A3A3E;
+  --text-dim: #8A8880;
+
+  /* ── Scrims and subtle borders (neutral overlays that must follow theme) ── */
+  --scrim-soft: rgba(255, 255, 255, 0.05);
+  --scrim-medium: rgba(255, 255, 255, 0.10);
+  --scrim-strong: rgba(0, 0, 0, 0.60);
+  --scrim-backdrop: rgba(4, 4, 10, 0.88);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-subtle-strong: rgba(255, 255, 255, 0.16);
+
+  /* ── Z-index scale ──
+     Layering was previously ad hoc (50, 198, 250, 300, 500, 600, 700, 999,
+     9999), which put the navigation rail underneath every panel. */
+  --z-map-overlay: 2;
+  --z-status-bar: 90;
+  --z-rail: 150;
+  --z-hud: 200;
+  --z-tool-strip: 250;
+  --z-panel: 400;
+  --z-modal: 500;
+  --z-drawer: 600;
+  --z-popover: 700;
 
   /* ── Borders ── */
   --border-primary: rgba(var(--gold-rgb), 0.15);
@@ -68,10 +114,14 @@
   --edge-pad: 20px;
 }
 
-/* 🔥
+/* ═══════════════════════════════════════════════════════════════
    THEME TRANSITION SYSTEM
-   🔥 */
-* {
+   Applied only while a theme switch is in flight. As an unconditional
+   `*` rule it would make every tokenised element animate on any style
+   change, which is a real cost on a page holding a WebGL globe and
+   thousands of HUD nodes.
+   ═══════════════════════════════════════════════════════════════ */
+body.theme-switching * {
   transition: background-color 0.6s cubic-bezier(0.16, 1, 0.3, 1),
               border-color 0.6s cubic-bezier(0.16, 1, 0.3, 1),
               color 0.6s cubic-bezier(0.16, 1, 0.3, 1),
@@ -115,6 +165,34 @@ body.theme-ghost {
   --scrollbar-thumb: rgba(179, 136, 255, 0.25);
   --scrollbar-thumb-hover: rgba(179, 136, 255, 0.5);
   --hover-accent: rgba(179, 136, 255, 0.1);
+
+  /* Alert chrome shifts into the phantom palette. Severity tokens deliberately
+     do NOT appear here — red still means critical in Ghost Protocol. */
+  --alert-red: #FF5370;
+  --alert-orange: #FFAB40;
+  --alert-green: #69F0AE;
+  --alert-blue: #7C4DFF;
+  --alert-red-rgb: 255, 83, 112;
+  --alert-orange-rgb: 255, 171, 64;
+  --alert-green-rgb: 105, 240, 174;
+
+  --accent-weather: #EA80FC;
+  --accent-nuclear: #B2FF59;
+
+  /* Violet-tinted surfaces so panels stop reading olive-grey against the theme. */
+  --surface-0: #07000F;
+  --surface-1: #120826;
+  --surface-2: #1C1036;
+  --surface-3: #281847;
+  --surface-line: #3A2560;
+  --text-dim: #9575CD;
+
+  --scrim-soft: rgba(179, 136, 255, 0.06);
+  --scrim-medium: rgba(179, 136, 255, 0.12);
+  --scrim-strong: rgba(5, 0, 15, 0.65);
+  --scrim-backdrop: rgba(5, 0, 15, 0.90);
+  --border-subtle: rgba(179, 136, 255, 0.12);
+  --border-subtle-strong: rgba(179, 136, 255, 0.24);
 }
 
 @theme inline {
@@ -251,6 +329,22 @@ html, body {
 .animate-data-pulse { animation: data-pulse 2s ease-in-out infinite; }
 .animate-threat-flash { animation: threat-flash 1.5s ease-in-out infinite; }
 
+/* Status-bar glitch line. GlobalStatusBar referenced this by name but it was
+   never defined, so the ticker's scan line has been sitting motionless. */
+@keyframes hud-scanline {
+  0% { transform: translateX(-100%); opacity: 0; }
+  10% { opacity: 0.7; }
+  90% { opacity: 0.7; }
+  100% { transform: translateX(100%); opacity: 0; }
+}
+
+/* Referenced by OsintPanel's fullscreen shell, previously undefined. */
+.full-screen-mode-content {
+  height: 100%;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 /* Splash screen scanline drift */
 @keyframes splashScanDrift {
   0% { background-position: 0 0; }
@@ -294,10 +388,11 @@ html, body {
 .layer-toggle.active::after { left: 15px; background: var(--gold-primary); box-shadow: 0 0 8px rgba(var(--gold-rgb), 0.5); }
 
 /* ── Risk Badges ── */
-.risk-critical { color: #FF3D3D; text-shadow: 0 0 8px rgba(255, 61, 61, 0.5); }
-.risk-high { color: #FF9500; text-shadow: 0 0 8px rgba(255, 149, 0, 0.3); }
-.risk-medium { color: #D4AF37; }
-.risk-low { color: #00E676; }
+/* Severity, not brand — these keep their meaning in both themes. */
+.risk-critical { color: var(--severity-critical); text-shadow: 0 0 8px rgba(var(--severity-critical-rgb), 0.5); }
+.risk-high { color: var(--severity-high); text-shadow: 0 0 8px rgba(var(--severity-high-rgb), 0.3); }
+.risk-medium { color: var(--severity-elevated); }
+.risk-low { color: var(--severity-nominal); }
 
 /* ── CRT Scanlines ── */
 .crt-scanlines {
@@ -1386,10 +1481,10 @@ html, body {
   text-transform: uppercase;
   border: 1px solid;
 }
-.gotham-tag--critical { background: rgba(255,61,61,0.12); color: #FF3D3D; border-color: rgba(255,61,61,0.3); }
-.gotham-tag--high { background: rgba(255,149,0,0.12); color: #FF9500; border-color: rgba(255,149,0,0.3); }
-.gotham-tag--medium { background: rgba(var(--gold-rgb),0.12); color: #D4AF37; border-color: rgba(var(--gold-rgb),0.3); }
-.gotham-tag--low { background: rgba(0,230,118,0.12); color: #00E676; border-color: rgba(0,230,118,0.3); }
+.gotham-tag--critical { background: rgba(var(--severity-critical-rgb),0.12); color: var(--severity-critical); border-color: rgba(var(--severity-critical-rgb),0.3); }
+.gotham-tag--high { background: rgba(var(--severity-high-rgb),0.12); color: var(--severity-high); border-color: rgba(var(--severity-high-rgb),0.3); }
+.gotham-tag--medium { background: rgba(var(--severity-elevated-rgb),0.12); color: var(--severity-elevated); border-color: rgba(var(--severity-elevated-rgb),0.3); }
+.gotham-tag--low { background: rgba(var(--severity-nominal-rgb),0.12); color: var(--severity-nominal); border-color: rgba(var(--severity-nominal-rgb),0.3); }
 .gotham-tag--info { background: rgba(var(--cyan-rgb),0.08); color: var(--cyan-primary); border-color: rgba(var(--cyan-rgb),0.2); }
 .gotham-tag--classified { background: rgba(var(--gold-rgb),0.08); color: var(--gold-primary); border-color: rgba(var(--gold-rgb),0.25); letter-spacing: 0.2em; }
 

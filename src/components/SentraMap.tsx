@@ -10,7 +10,8 @@ interface SentraMapProps {
   onEntityClick?: (entity: any) => void;
   onMouseCoords?: (coords: { lat: number; lng: number }) => void;
   onRightClick?: (coords: { lat: number; lng: number }) => void;
-  onViewStateChange?: (vs: { zoom: number; latitude: number }) => void;
+  onViewStateChange?: (vs: { zoom: number; latitude: number; longitude: number }) => void;
+  initialView?: { lat: number; lng: number; zoom: number };
   flyToLocation?: { lat: number; lng: number; ts: number } | null;
   projection?: 'mercator' | 'globe';
   mapStyle?: string;
@@ -41,11 +42,45 @@ function computeSolarTerminator(): [number, number][] {
 }
 
 const EMPTY_FC = { type: 'FeatureCollection' as const, features: [] };
+const DEFAULT_INITIAL_VIEW = { lat: 40.8836, lng: 0, zoom: 1.59 };
 
-function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightClick, onViewStateChange, flyToLocation, projection = 'globe', mapStyle = 'dark', sweepData, scanTargets = [], demoMode = false, theme = 'core' }: SentraMapProps) {
+// ── Subsea cable styling ──
+const CABLE_STATUS_COLOR = ['match', ['get', 'status'],
+  'operational', '#26C6DA',
+  'under_construction', '#F9A825',
+  'planned', '#7E57C2',
+  'not_operational', '#D32F2F',
+  '#546E7A',
+] as unknown as maplibregl.ExpressionSpecification;
+
+/** Light amber traffic pulse travelling along in-service cables. */
+const CABLE_FLOW_COLOR = '#FFB74D';
+
+/**
+ * Dash patterns that, stepped in order, read as a dash sliding along the line.
+ * `line-dasharray` accepts neither transitions nor expressions, so the offset
+ * has to be advanced by swapping literal arrays on a timer.
+ */
+const CABLE_FLOW_DASHES: number[][] = [
+  [0, 4, 3], [0.5, 4, 2.5], [1, 4, 2], [1.5, 4, 1.5], [2, 4, 1], [2.5, 4, 0.5],
+  [3, 4, 0], [0, 0.5, 3, 3.5], [0, 1, 3, 3], [0, 1.5, 3, 2.5], [0, 2, 3, 2],
+  [0, 2.5, 3, 1.5], [0, 3, 3, 1], [0, 3.5, 3, 0.5],
+];
+/** ~9fps — slow drift, and far cheaper than repainting 700 lines every frame. */
+const CABLE_FLOW_STEP_MS = 110;
+
+const CABLE_STATUS_LABEL: Record<string, string> = {
+  operational: 'OPERATIONAL',
+  under_construction: 'UNDER CONSTRUCTION',
+  planned: 'PLANNED',
+  not_operational: 'NOT OPERATIONAL',
+};
+
+function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightClick, onViewStateChange, initialView = DEFAULT_INITIAL_VIEW, flyToLocation, projection = 'globe', mapStyle = 'dark', sweepData, scanTargets = [], demoMode = false, theme = 'core' }: SentraMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const popupRef = useRef<maplibregl.Popup | null>(null);
+  const initialViewRef = useRef(initialView);
   const [mapReady, setMapReady] = useState(false);
   const prevStyleRef = useRef(mapStyle);
 
@@ -138,11 +173,12 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
     
     // Select basemap style
     const styleUrl = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+    const startView = initialViewRef.current;
 
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: styleUrl,
-      center: [25.48, 42.70], zoom: 6.5, minZoom: 1.5, maxZoom: 18,
+      center: [startView.lng, startView.lat], zoom: startView.zoom, minZoom: 1.5, maxZoom: 18,
       attributionControl: false,
       maxPitch: 85,
       transformRequest: (url: string) => {
@@ -181,7 +217,7 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       createDot(map, 'dot-fire', isGhost ? phantomPurple : '#E65100', 10);
       createDot(map, 'dot-cctv', cameraColor, 10);
 
-      const sources = ['flights','military','jets','private-fl','satellites','earthquakes','gdelt','gps-jamming','day-night','cctv','fires','weather','infrastructure','maritime','maritime-choke','maritime-ships','live-news','sigint-news','conflict-zones', 'war-alerts-targets', 'war-alerts-lines', 'balloons', 'radiation', 'ip-sweep-devices', 'ip-sweep-pulse', 'ip-sweep-connections', 'scan-targets', 'sdk-entities', 'sdk-links', 'malware-nodes', 'network-mesh'];
+      const sources = ['flights','military','jets','private-fl','satellites','earthquakes','gdelt','gps-jamming','day-night','cctv','fires','weather','infrastructure','maritime','maritime-choke','maritime-ships','live-news','sigint-news','conflict-zones', 'war-alerts-targets', 'war-alerts-lines', 'balloons', 'radiation', 'ip-sweep-devices', 'ip-sweep-pulse', 'ip-sweep-connections', 'scan-targets', 'sdk-entities', 'sdk-links', 'malware-nodes', 'network-mesh', 'cables'];
       sources.forEach(s => map.addSource(s, { type: 'geojson', data: EMPTY_FC }));
 
       // Warning icon generator (parameterized — eliminates 3x copy-paste)
@@ -224,6 +260,52 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
 
       // Day/Night
       map.addLayer({ id: 'day-night-fill', type: 'fill', source: 'day-night', paint: { 'fill-color': isGhost ? '#0D0030' : '#000022', 'fill-opacity': 0.35 }});
+
+      // ══ SUBSEA FIBRE-OPTIC CABLES (TeleGeography open data) ══
+      // Colour encodes lifecycle status. Systems not yet carrying traffic are
+      // drawn dashed; the animated overlay above runs on in-service cables only.
+      map.addLayer({ id: 'cables-halo', type: 'line', source: 'cables', paint: {
+        'line-color': CABLE_STATUS_COLOR,
+        'line-width': ['interpolate',['linear'],['zoom'], 1, 3, 5, 6, 10, 10],
+        'line-opacity': 0.12,
+        'line-blur': 3,
+      }});
+      map.addLayer({ id: 'cables-line', type: 'line', source: 'cables',
+        filter: ['in', ['get','status'], ['literal', ['operational', 'not_operational']]],
+        paint: {
+          'line-color': CABLE_STATUS_COLOR,
+          'line-width': ['interpolate',['linear'],['zoom'], 1, 0.7, 5, 1.3, 10, 2.4],
+          'line-opacity': ['match', ['get','status'], 'not_operational', 0.9, 0.7],
+        }});
+      map.addLayer({ id: 'cables-future', type: 'line', source: 'cables',
+        filter: ['in', ['get','status'], ['literal', ['planned', 'under_construction']]],
+        paint: {
+          'line-color': CABLE_STATUS_COLOR,
+          'line-width': ['interpolate',['linear'],['zoom'], 1, 0.7, 5, 1.2, 10, 2],
+          'line-opacity': ['match', ['get','status'], 'under_construction', 0.8, 0.5],
+          'line-dasharray': [2, 3],
+        }});
+      // Traffic-flow overlay — the dash offset is stepped on a timer below.
+      map.addLayer({ id: 'cables-flow', type: 'line', source: 'cables',
+        filter: ['==', ['get','status'], 'operational'],
+        paint: {
+          'line-color': CABLE_FLOW_COLOR,
+          'line-width': ['interpolate',['linear'],['zoom'], 1, 0.9, 5, 1.6, 10, 2.8],
+          'line-opacity': ['interpolate',['linear'],['zoom'], 1, 0.55, 5, 0.7, 10, 0.85],
+          'line-dasharray': [0, 4, 3],
+        }});
+      map.addLayer({ id: 'cables-label', type: 'symbol', source: 'cables', minzoom: 3, layout: {
+        'symbol-placement': 'line',
+        'text-field': ['get','name'],
+        'text-size': ['interpolate',['linear'],['zoom'], 3, 8, 8, 11],
+        'text-font': ['Open Sans Regular'],
+        'text-max-width': 20,
+        'symbol-spacing': 350,
+        'text-allow-overlap': false,
+      }, paint: {
+        'text-color': CABLE_STATUS_COLOR,
+        'text-halo-color': '#000', 'text-halo-width': 1.2, 'text-opacity': 0.85,
+      }});
 
       // Earthquakes — amber threat spectrum
       map.addLayer({ id: 'eq-circles', type: 'circle', source: 'earthquakes', paint: {
@@ -504,14 +586,6 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       // ══ Sentra Mi8 SDK — Lattice Intelligence Mesh ══
       // Polybolos Style: Delicate, translucent, steel-blue splined mesh
 
-      // ── SEA domain (Distinct Solid Lines) ──
-      // Removed glow to match the clean, diagrammatic look of submarinecablemap.com
-      map.addLayer({ id: 'sdk-sea', type: 'line', source: 'sdk-links', filter: ['==',['get','domain'],'SEA'], paint: {
-        'line-color': ['coalesce', ['get', 'color'], '#1976D2'], // Single solid color from properties
-        'line-width': ['interpolate',['linear'],['zoom'], 1, 0.8, 5, 1.5, 10, 2.5],
-        'line-opacity': ['interpolate',['linear'],['zoom'], 1, 0.3, 5, 0.5, 10, 0.7],
-      }});
-
       // ── AIR domain (Steel Gray / Cyan) ──
       map.addLayer({ id: 'sdk-air-atmo', type: 'line', source: 'sdk-links', filter: ['==',['get','domain'],'AIR'], paint: {
         'line-color': '#4DD0E1',
@@ -550,11 +624,23 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
         'line-opacity': ['interpolate',['linear'],['zoom'], 1, 0.3, 5, 0.45, 10, 0.7],
       }});
 
-      // Maritime Ships (moving entities) — ocean teal family
-      map.addLayer({ id: 'ship-dots', type: 'circle', source: 'maritime-ships', paint: {
-        'circle-radius': ['interpolate',['linear'],['zoom'], 1,2, 5,4, 10,6],
+      // Maritime Ships (moving entities) — ocean teal family.
+      // Sized to stay legible at globe zoom: at 2px/0.75 opacity these were
+      // invisible next to the 52 labelled port markers, which is why open-ocean
+      // traffic read as "no ships out there" despite ~20k vessels streaming.
+      map.addLayer({ id: 'ship-halo', type: 'circle', source: 'maritime-ships', paint: {
+        'circle-radius': ['interpolate',['linear'],['zoom'], 1,3.5, 5,7, 10,11],
         'circle-color': ['match', ['get','type'], 'military','#D32F2F', 'tanker','#E65100', 'cargo','#26C6DA', '#B0BEC5'],
-        'circle-opacity': 0.75,
+        'circle-opacity': 0.18,
+        'circle-blur': 0.6,
+      }});
+      map.addLayer({ id: 'ship-dots', type: 'circle', source: 'maritime-ships', paint: {
+        'circle-radius': ['interpolate',['linear'],['zoom'], 1,1.8, 3,2.6, 5,4.5, 10,7],
+        'circle-color': ['match', ['get','type'], 'military','#D32F2F', 'tanker','#E65100', 'cargo','#26C6DA', '#B0BEC5'],
+        'circle-opacity': 0.95,
+        'circle-stroke-width': ['interpolate',['linear'],['zoom'], 1,0.4, 5,0.8],
+        'circle-stroke-color': '#04040A',
+        'circle-stroke-opacity': 0.7,
       }});
       map.addLayer({ id: 'ship-label', type: 'symbol', source: 'maritime-ships', minzoom: 5, layout: {
         'text-field': ['get','name'], 'text-size': 9, 'text-font': ['Open Sans Regular'],
@@ -574,7 +660,7 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       }
     });
     map.on('contextmenu', e => { e.preventDefault(); onRightClick?.({ lat: e.lngLat.lat, lng: e.lngLat.lng }); });
-    map.on('moveend', () => { const c = map.getCenter(); onViewStateChange?.({ zoom: map.getZoom(), latitude: c.lat }); });
+    map.on('moveend', () => { const c = map.getCenter(); onViewStateChange?.({ zoom: map.getZoom(), latitude: c.lat, longitude: c.lng }); });
 
     // ── POPUP HELPER ──
     const popup = (coords: any, html: string) => {
@@ -583,11 +669,29 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
     };
     const pStyle = `background:rgba(12,14,26,0.95);backdrop-filter:blur(16px);border-radius:10px;padding:16px;font-family:'JetBrains Mono',monospace;`;
     const linkStyle = `display:inline-block;margin-top:8px;padding:5px 12px;font-size:10px;letter-spacing:0.12em;text-decoration:none;border-radius:5px;font-family:'JetBrains Mono',monospace;`;
+    // Popup bodies are built as HTML strings from feed data that arrives from
+    // third parties (abuse.ch, URLhaus, ADS-B callsigns, camera names, cable
+    // metadata). Every interpolated value must go through one of these.
     const escapeAttr = (value: string) => value
       .replace(/&/g, '&amp;')
       .replace(/'/g, '&#39;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
+
+    /** Escapes a value for use as HTML text or inside a double-quoted attribute. */
+    const esc = (value: unknown) => String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+    /**
+     * Serialises an object for an inline handler. The attribute must be
+     * single-quoted at the call site: JSON supplies double quotes, and escaping
+     * the apostrophe is what prevents an attribute breakout.
+     */
+    const intelArg = (payload: unknown) => escapeAttr(JSON.stringify(payload));
 
     // ── Flights (with FlightAware + ADS-B Exchange links) ──
     ['fl-commercial','fl-private','fl-jets','fl-military'].forEach(layer => {
@@ -596,7 +700,8 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
         const p = e.features[0].properties as any;
         const coords = (e.features[0].geometry as any).coordinates;
         const cs = (p.callsign||'').trim();
-        const intelPayload = escapeAttr(JSON.stringify({
+        const aircraftEntity = {
+          type: 'aircraft',
           callsign: cs,
           icao24: p.icao24 || '',
           model: p.model || '',
@@ -618,26 +723,28 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
           feedTimestamp: p.feedTimestamp || p.feed_timestamp || '',
           feed_timestamp: p.feedTimestamp || p.feed_timestamp || '',
           source: p.source || 'ADS-B / adsb.lol',
-        }));
-        popup(coords, `<div style="${pStyle}border:1px solid rgba(212,175,55,0.3);">
+        };
+        onEntityClick?.(aircraftEntity);
+        const intelPayload = escapeAttr(JSON.stringify(aircraftEntity));
+        popup(coords, `<div style="${pStyle}border:1px solid rgba(var(--gold-rgb),0.3);">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <span style="color:#D4AF37;font-size:16px;font-weight:700;letter-spacing:0.1em;">${cs}</span>
-            <span style="color:#5C5A54;font-size:10px;">${p.icao24||''}</span>
+            <span style="color:var(--gold-primary);font-size:16px;font-weight:700;letter-spacing:0.1em;">${cs}</span>
+            <span style="color:var(--text-muted);font-size:10px;">${esc(p.icao24 || '')}</span>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:11px;">
-            <div><span style="color:#5C5A54;font-size:9px;">MODEL</span><br/><span style="color:#E8E6E0;">${p.model||'—'}</span></div>
-            <div><span style="color:#5C5A54;font-size:9px;">ALT</span><br/><span style="color:#00E5FF;">${p.alt?Math.round(p.alt)+'m':'—'}</span></div>
-            <div><span style="color:#5C5A54;font-size:9px;">SPEED</span><br/><span style="color:#E8E6E0;">${p.speed_knots||'—'}kt</span></div>
-            <div><span style="color:#5C5A54;font-size:9px;">HDG</span><br/><span style="color:#E8E6E0;">${Math.round(p.heading||0)}°</span></div>
-            <div><span style="color:#5C5A54;font-size:9px;">REG</span><br/><span style="color:#E8E6E0;">${p.registration||'—'}</span></div>
-            <div><span style="color:#5C5A54;font-size:9px;">POS</span><br/><span style="color:#E8E6E0;">${coords[1].toFixed(2)},${coords[0].toFixed(2)}</span></div>
+            <div><span style="color:var(--text-muted);font-size:9px;">MODEL</span><br/><span style="color:var(--text-primary);">${esc(p.model || '—')}</span></div>
+            <div><span style="color:var(--text-muted);font-size:9px;">ALT</span><br/><span style="color:var(--cyan-primary);">${p.alt?Math.round(p.alt)+'m':'—'}</span></div>
+            <div><span style="color:var(--text-muted);font-size:9px;">SPEED</span><br/><span style="color:var(--text-primary);">${p.speed_knots||'—'}kt</span></div>
+            <div><span style="color:var(--text-muted);font-size:9px;">HDG</span><br/><span style="color:var(--text-primary);">${Math.round(p.heading||0)}°</span></div>
+            <div><span style="color:var(--text-muted);font-size:9px;">REG</span><br/><span style="color:var(--text-primary);">${esc(p.registration || '—')}</span></div>
+            <div><span style="color:var(--text-muted);font-size:9px;">POS</span><br/><span style="color:var(--text-primary);">${coords[1].toFixed(2)},${coords[0].toFixed(2)}</span></div>
           </div>
           <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap;">
-            <a href="https://www.flightaware.com/live/flight/${cs}" target="_blank" style="${linkStyle}color:#D4AF37;border:1px solid rgba(212,175,55,0.4);background:rgba(212,175,55,0.1);">⚡ FLIGHTAWARE</a>
-            <a href="https://globe.adsbexchange.com/?icao=${p.icao24||''}" target="_blank" style="${linkStyle}color:#00E5FF;border:1px solid rgba(0,229,255,0.4);background:rgba(0,229,255,0.1);">📡 ADS-B</a>
+            <a href="https://www.flightaware.com/live/flight/${cs}" target="_blank" style="${linkStyle}color:var(--gold-primary);border:1px solid rgba(var(--gold-rgb),0.4);background:rgba(var(--gold-rgb),0.1);">⚡ FLIGHTAWARE</a>
+            <a href="https://globe.adsbexchange.com/?icao=${esc(p.icao24 || '')}" target="_blank" style="${linkStyle}color:var(--cyan-primary);border:1px solid rgba(var(--cyan-rgb),0.4);background:rgba(var(--cyan-rgb),0.1);">📡 ADS-B</a>
             <a href="https://www.radarbox.com/data/flights/${cs}" target="_blank" style="${linkStyle}color:#FF69B4;border:1px solid rgba(255,105,180,0.4);background:rgba(255,105,180,0.1);">📍 RADARBOX</a>
           </div>
-          <button onclick='window.openSentraIntel(${intelPayload})' style="width:100%;margin-top:8px;padding:6px 12px;background:rgba(212,175,55,0.15);border:1px solid rgba(212,175,55,0.5);color:#D4AF37;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:bold;letter-spacing:0.1em;border-radius:4px;cursor:pointer;">[ DEEP DIVE INTEL ]</button>
+          <button onclick='window.openSentraIntel(${intelPayload})' style="width:100%;margin-top:8px;padding:6px 12px;background:rgba(var(--gold-rgb),0.15);border:1px solid rgba(var(--gold-rgb),0.5);color:var(--gold-primary);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:bold;letter-spacing:0.1em;border-radius:4px;cursor:pointer;">[ DEEP DIVE INTEL ]</button>
         </div>`);
       });
       map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
@@ -661,6 +768,9 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
         stream_url: p.stream_url,
         stream_type: p.stream_type,
         external_url: p.external_url,
+        video_url: p.video_url,
+        refresh_ms: p.refresh_ms ? Number(p.refresh_ms) : undefined,
+        video_auth_required: p.video_auth_required === true || p.video_auth_required === '1',
         lat: coords[1],
         lng: coords[0],
       });
@@ -674,13 +784,13 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       const p = e.features[0].properties as any;
       const coords = (e.features[0].geometry as any).coordinates;
       popup(coords, `<div style="${pStyle}border:1px solid rgba(255,149,0,0.3);">
-        <div style="color:#FF9500;font-size:14px;font-weight:700;margin-bottom:4px;">M${p.magnitude} EARTHQUAKE</div>
-        <div style="font-size:9px;color:#E8E6E0;margin-bottom:8px;">${p.place||'Unknown location'}</div>
+        <div style="color:var(--alert-orange);font-size:14px;font-weight:700;margin-bottom:4px;">M${p.magnitude} EARTHQUAKE</div>
+        <div style="font-size:9px;color:var(--text-primary);margin-bottom:8px;">${esc(p.place || 'Unknown location')}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:9px;">
-          <div><span style="color:#5C5A54;">DEPTH</span><br/><span style="color:#E8E6E0;">${p.depth||'—'}km</span></div>
-          <div><span style="color:#5C5A54;">COORDS</span><br/><span style="color:#E8E6E0;">${coords[1].toFixed(3)}, ${coords[0].toFixed(3)}</span></div>
+          <div><span style="color:var(--text-muted);">DEPTH</span><br/><span style="color:var(--text-primary);">${p.depth||'—'}km</span></div>
+          <div><span style="color:var(--text-muted);">COORDS</span><br/><span style="color:var(--text-primary);">${coords[1].toFixed(3)}, ${coords[0].toFixed(3)}</span></div>
         </div>
-        <a href="${p.source === 'NIGGG-BAS' ? 'https://ndc.niggg.bas.bg/' : `https://earthquake.usgs.gov/earthquakes/eventpage/${p.id||''}`}" target="_blank" style="${linkStyle}color:#FF9500;border:1px solid rgba(255,149,0,0.4);background:rgba(255,149,0,0.1);">📊 ${p.source === 'NIGGG-BAS' ? 'NIGGG-BAS' : 'USGS DETAILS'}</a>
+        <a href="${p.source === 'NIGGG-BAS' ? 'https://ndc.niggg.bas.bg/' : `https://earthquake.usgs.gov/earthquakes/eventpage/${esc(p.id || '')}`}" target="_blank" style="${linkStyle}color:var(--alert-orange);border:1px solid rgba(255,149,0,0.4);background:rgba(255,149,0,0.1);">📊 ${p.source === 'NIGGG-BAS' ? 'NIGGG-BAS' : 'USGS DETAILS'}</a>
       </div>`);
     });
 
@@ -689,14 +799,14 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       if (!e.features?.length) return;
       const p = e.features[0].properties as any;
       const coords = (e.features[0].geometry as any).coordinates;
-      popup(coords, `<div style="${pStyle}border:1px solid rgba(212,175,55,0.3);">
-        <div style="color:#D4AF37;font-size:12px;font-weight:700;letter-spacing:0.1em;margin-bottom:4px;">🛰️ ${p.name}</div>
+      popup(coords, `<div style="${pStyle}border:1px solid rgba(var(--gold-rgb),0.3);">
+        <div style="color:var(--gold-primary);font-size:12px;font-weight:700;letter-spacing:0.1em;margin-bottom:4px;">🛰️ ${esc(p.name)}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;font-size:9px;margin-bottom:8px;">
-          <div><span style="color:#5C5A54;">MISSION</span><br/><span style="color:${p.color||'#aaa'};">${p.mission||'Unknown'}</span></div>
-          <div><span style="color:#5C5A54;">ALT</span><br/><span style="color:#00E5FF;">${p.alt ? p.alt+' km' : '—'}</span></div>
-          <div><span style="color:#5C5A54;">POS</span><br/><span style="color:#E8E6E0;">${coords[1].toFixed(2)}°, ${coords[0].toFixed(2)}°</span></div>
+          <div><span style="color:var(--text-muted);">MISSION</span><br/><span style="color:${esc(p.color || '#aaa')};">${esc(p.mission || 'Unknown')}</span></div>
+          <div><span style="color:var(--text-muted);">ALT</span><br/><span style="color:var(--cyan-primary);">${p.alt ? p.alt+' km' : '—'}</span></div>
+          <div><span style="color:var(--text-muted);">POS</span><br/><span style="color:var(--text-primary);">${coords[1].toFixed(2)}°, ${coords[0].toFixed(2)}°</span></div>
         </div>
-        ${p.noradId ? `<a href="https://db.satnogs.org/satellite/${p.noradId}/" target="_blank" style="display:block;text-align:center;padding:4px;margin-top:6px;font-size:8px;font-family:monospace;letter-spacing:0.1em;text-decoration:none;color:#00E5FF;border:1px solid rgba(0,229,255,0.4);background:rgba(0,229,255,0.1);border-radius:2px;cursor:pointer;">🔭 SOURCE: SATNOGS</a>` : ''}
+        ${p.noradId ? `<a href="https://db.satnogs.org/satellite/${esc(p.noradId)}/" target="_blank" style="display:block;text-align:center;padding:4px;margin-top:6px;font-size:8px;font-family:monospace;letter-spacing:0.1em;text-decoration:none;color:var(--cyan-primary);border:1px solid rgba(var(--cyan-rgb),0.4);background:rgba(var(--cyan-rgb),0.1);border-radius:2px;cursor:pointer;">🔭 SOURCE: SATNOGS</a>` : ''}
       </div>`);
     });
 
@@ -706,12 +816,12 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       const p = e.features[0].properties as any;
       const coords = (e.features[0].geometry as any).coordinates;
       popup(coords, `<div style="${pStyle}border:1px solid rgba(255,107,0,0.3);">
-        <div style="color:#FF6B00;font-size:12px;font-weight:700;margin-bottom:6px;">🔥 ACTIVE FIRE DETECTED</div>
+        <div style="color:var(--alert-orange);font-size:12px;font-weight:700;margin-bottom:6px;">🔥 ACTIVE FIRE DETECTED</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:9px;margin-bottom:8px;">
-          <div><span style="color:#5C5A54;">BRIGHTNESS</span><br/><span style="color:#FF6B00;">${p.brightness||'—'}K</span></div>
-          <div><span style="color:#5C5A54;">COORDS</span><br/><span style="color:#E8E6E0;">${coords[1].toFixed(3)}°, ${coords[0].toFixed(3)}°</span></div>
+          <div><span style="color:var(--text-muted);">BRIGHTNESS</span><br/><span style="color:var(--alert-orange);">${p.brightness||'—'}K</span></div>
+          <div><span style="color:var(--text-muted);">COORDS</span><br/><span style="color:var(--text-primary);">${coords[1].toFixed(3)}°, ${coords[0].toFixed(3)}°</span></div>
         </div>
-        <a href="https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;l:noaa20-viirs,viirs,modis_a,modis_t;@${coords[0]},${coords[1]},10z" target="_blank" style="${linkStyle}color:#FF6B00;border:1px solid rgba(255,107,0,0.4);background:rgba(255,107,0,0.1);">🛰️ NASA FIRMS MAP</a>
+        <a href="https://firms.modaps.eosdis.nasa.gov/map/#d:24hrs;l:noaa20-viirs,viirs,modis_a,modis_t;@${coords[0]},${coords[1]},10z" target="_blank" style="${linkStyle}color:var(--alert-orange);border:1px solid rgba(255,107,0,0.4);background:rgba(255,107,0,0.1);">🛰️ NASA FIRMS MAP</a>
       </div>`);
     });
 
@@ -725,18 +835,18 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       
       popup(coords, `<div style="${pStyle}border:1px solid rgba(255,23,68,0.4);box-shadow:inset 0 0 12px rgba(255,23,68,0.1);">
         <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid rgba(255,23,68,0.3);padding-bottom:6px;margin-bottom:8px;">
-          <div style="color:#FF1744;font-size:12px;font-weight:700;letter-spacing:0.1em;text-shadow:0 0 4px rgba(255,23,68,0.5);">[ ${tType} ]</div>
-          <div style="color:#5C5A54;font-size:9px;">${p.country || 'UNKNOWN'}</div>
+          <div style="color:var(--alert-red);font-size:12px;font-weight:700;letter-spacing:0.1em;text-shadow:0 0 4px rgba(255,23,68,0.5);">[ ${tType} ]</div>
+          <div style="color:var(--text-muted);font-size:9px;">${esc(p.country || 'UNKNOWN')}</div>
         </div>
-        <div style="color:#E8E6E0;font-size:11px;font-weight:bold;margin-bottom:10px;">${p.malware || 'Unidentified Threat Payload'}</div>
+        <div style="color:var(--text-primary);font-size:11px;font-weight:bold;margin-bottom:10px;">${esc(p.malware || 'Unidentified Threat Payload')}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:9px;margin-bottom:12px;background:rgba(0,0,0,0.3);padding:6px;border-radius:4px;">
-          <div><span style="color:#5C5A54;">TARGET IP</span><br/><span style="color:#00E5FF;font-family:monospace;">${p.ip}</span></div>
-          <div><span style="color:#5C5A54;">STATUS</span><br/><span style="color:${statusColor};">${(p.status||'UNKNOWN').toUpperCase()}</span></div>
+          <div><span style="color:var(--text-muted);">TARGET IP</span><br/><span style="color:var(--cyan-primary);font-family:monospace;">${esc(p.ip)}</span></div>
+          <div><span style="color:var(--text-muted);">STATUS</span><br/><span style="color:${statusColor};">${esc((p.status||'UNKNOWN')).toUpperCase()}</span></div>
         </div>
         <div style="display:flex;gap:6px;">
-          <a href="https://feodotracker.abuse.ch/browse/" target="_blank" style="${linkStyle}flex:1;text-align:center;color:#E8E6E0;border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.05);">THREAT INTEL ↗</a>
+          <a href="https://feodotracker.abuse.ch/browse/" target="_blank" rel="noopener noreferrer" style="${linkStyle}flex:1;text-align:center;color:var(--text-primary);border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.05);">THREAT INTEL ↗</a>
         </div>
-        <button onclick="window.openSentraIntel({ type: 'ip', ip: '${p.ip}', threat_type: '${p.malware || p.threat_type || ''}', status: '${p.status || ''}' })" style="width:100%;margin-top:8px;padding:8px 12px;background:linear-gradient(90deg, rgba(255,23,68,0.1) 0%, rgba(255,23,68,0.2) 100%);border:1px solid rgba(255,23,68,0.6);color:#FF1744;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:bold;letter-spacing:0.15em;border-radius:4px;cursor:pointer;transition:all 0.2s;">DEEP DIVE ANALYTICS</button>
+        <button onclick='window.openSentraIntel(${intelArg({ type: 'ip', ip: p.ip, threat_type: p.malware || p.threat_type || '', status: p.status || '' })})' style="width:100%;margin-top:8px;padding:8px 12px;background:linear-gradient(90deg, rgba(255,23,68,0.1) 0%, rgba(255,23,68,0.2) 100%);border:1px solid rgba(255,23,68,0.6);color:var(--alert-red);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:bold;letter-spacing:0.15em;border-radius:4px;cursor:pointer;transition:all 0.2s;">DEEP DIVE ANALYTICS</button>
       </div>`);
     });
 
@@ -761,9 +871,9 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       }
 
       popup(coords, `<div style="${pStyle}border:1px solid rgba(255,61,61,0.3);">
-        <div style="color:#FF3D3D;font-size:12px;font-weight:700;margin-bottom:6px;">⚠️ CONFLICT EVENT</div>
-        <div style="font-size:9px;color:#E8E6E0;margin-bottom:8px;line-height:1.4;">${p.name||'Unclassified incident'}</div>
-        <a href="${sourceUrl}" target="_blank" style="${linkStyle}flex:1;text-align:center;color:#FF3D3D;border:1px solid rgba(255,61,61,0.4);background:rgba(255,61,61,0.15);display:inline-block;width:100%;box-sizing:border-box;margin-top:4px;">[ OPEN SOURCE ↗ ]</a>
+        <div style="color:var(--alert-red);font-size:12px;font-weight:700;margin-bottom:6px;">⚠️ CONFLICT EVENT</div>
+        <div style="font-size:9px;color:var(--text-primary);margin-bottom:8px;line-height:1.4;">${esc(p.name || 'Unclassified incident')}</div>
+        <a href="${sourceUrl}" target="_blank" style="${linkStyle}flex:1;text-align:center;color:var(--alert-red);border:1px solid rgba(255,61,61,0.4);background:rgba(255,61,61,0.15);display:inline-block;width:100%;box-sizing:border-box;margin-top:4px;">[ OPEN SOURCE ↗ ]</a>
       </div>`);
     });
 
@@ -774,13 +884,14 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       const coords = (e.features[0].geometry as any).coordinates;
       const color = p.severity === 'war' ? '#FF1744' : p.severity === 'high' ? '#FF9500' : '#FFD500';
       popup(coords, `<div style="${pStyle}border:1px solid ${color}40;">
-        <div style="color:${color};font-size:12px;font-weight:700;margin-bottom:6px;">⚠️ ${p.label || 'WARNING EVENT'}</div>
-        <div style="font-size:10px;color:#E8E6E0;margin-bottom:8px;line-height:1.4;">${p.description || 'Global event detected at this location.'}</div>
+        <div style="color:${color};font-size:12px;font-weight:700;margin-bottom:6px;">⚠️ ${esc(p.label || 'WARNING EVENT')}</div>
+        <div style="font-size:10px;color:var(--text-primary);margin-bottom:8px;line-height:1.4;">${esc(p.description || 'Global event detected at this location.')}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:9px;margin-bottom:8px;">
-          <div><span style="color:#5C5A54;">SEVERITY</span><br/><span style="color:${color};">${(p.severity||'unknown').toUpperCase()}</span></div>
-          <div><span style="color:#5C5A54;">COORDS</span><br/><span style="color:#E8E6E0;">${coords[1].toFixed(3)}°, ${coords[0].toFixed(3)}°</span></div>
+          <div><span style="color:var(--text-muted);">SEVERITY</span><br/><span style="color:${color};">${(p.severity||'unknown').toUpperCase()}</span></div>
+          <div><span style="color:var(--text-muted);">COORDS</span><br/><span style="color:var(--text-primary);">${coords[1].toFixed(3)}°, ${coords[0].toFixed(3)}°</span></div>
         </div>
-        ${p.sourceUrl ? `<a href="${p.sourceUrl}" target="_blank" style="${linkStyle}flex:1;text-align:center;color:${color};border:1px solid ${color}40;background:${color}15;display:inline-block;width:100%;box-sizing:border-box;margin-top:4px;">[ OPEN SOURCE ↗ ]</a>` : ''}
+        ${p.basis ? `<div style="font-size:8px;color:var(--text-dim);margin-bottom:6px;line-height:1.4;">${esc(p.basis)}</div>` : ''}
+        ${p.sourceUrl ? `<a href="${p.sourceUrl}" target="_blank" rel="noopener noreferrer" style="${linkStyle}flex:1;text-align:center;color:${color};border:1px solid ${color}40;background:${color}15;display:inline-block;width:100%;box-sizing:border-box;margin-top:4px;">[ OPEN SOURCE ↗ ]</a>` : ''}
       </div>`);
     });
 
@@ -794,7 +905,10 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       'ADS-B → Lattice': 'https://opensky-network.org',
       'Naval Intelligence': 'https://www.odni.gov',
     };
-    ['sdk-sea','sdk-sea-glow','sdk-air','sdk-air-glow','sdk-intel','sdk-intel-glow'].forEach(layer => {
+    // sdk-sea* are gone — subsea cables are owned by the dedicated cables layer.
+    // Binding handlers to layer ids that were never added makes MapLibre query a
+    // non-existent layer on every hover.
+    ['sdk-air','sdk-air-glow','sdk-intel','sdk-intel-glow'].forEach(layer => {
       map.on('click', layer, e => {
         if (!e.features?.length) return;
         const p = e.features[0].properties as any;
@@ -809,10 +923,10 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
             <span style="color:${domainColor};font-size:11px;font-weight:700;letter-spacing:0.1em;">${domainLabel}</span>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:9px;margin-bottom:8px;">
-            <div><span style="color:#5C5A54;">FROM</span><br/><span style="color:#E8E6E0;">${p.fromName || 'Origin'}</span></div>
-            <div><span style="color:#5C5A54;">TO</span><br/><span style="color:#E8E6E0;">${p.toName || 'Destination'}</span></div>
-            <div><span style="color:#5C5A54;">DOMAIN</span><br/><span style="color:${domainColor};">${p.domain}</span></div>
-            <div><span style="color:#5C5A54;">SOURCE</span><br/><a href="${srcUrl}" target="_blank" style="color:${domainColor};text-decoration:underline;cursor:pointer;">${p.source || 'Sentra Mi8'}</a></div>
+            <div><span style="color:var(--text-muted);">FROM</span><br/><span style="color:var(--text-primary);">${esc(p.fromName || 'Origin')}</span></div>
+            <div><span style="color:var(--text-muted);">TO</span><br/><span style="color:var(--text-primary);">${esc(p.toName || 'Destination')}</span></div>
+            <div><span style="color:var(--text-muted);">DOMAIN</span><br/><span style="color:${domainColor};">${esc(p.domain)}</span></div>
+            <div><span style="color:var(--text-muted);">SOURCE</span><br/><a href="${srcUrl}" target="_blank" style="color:${domainColor};text-decoration:underline;cursor:pointer;">${esc(p.source || 'Sentra Mi8')}</a></div>
           </div>
           <a href="${srcUrl}" target="_blank" style="${linkStyle}color:${domainColor};border:1px solid ${domainColor}40;background:${domainColor}18;display:inline-block;margin-top:4px;">OPEN SOURCE ↗</a>
         </div>`);
@@ -820,7 +934,7 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
     });
 
     // ── Generic hover for clickables ──
-    ['conflict-icons','cctv-dots','eq-circles','sat-dots','fires-heat','gdelt-dots','weather-dots','infra-dots','maritime-dots','choke-dots','news-dots','sigint-news-dots','balloon-dots','rad-dots','ship-dots','sweep-device-dots','scan-targets-dots','sdk-sea','sdk-sea-glow','sdk-sea-atmo','sdk-air','sdk-air-glow','sdk-air-atmo','sdk-intel','sdk-intel-glow','sdk-intel-atmo','malware-dots'].forEach(layer => {
+    ['conflict-icons','cctv-dots','eq-circles','sat-dots','fires-heat','gdelt-dots','weather-dots','infra-dots','maritime-dots','choke-dots','news-dots','sigint-news-dots','balloon-dots','rad-dots','ship-dots','sweep-device-dots','scan-targets-dots','sdk-air','sdk-air-glow','sdk-air-atmo','sdk-intel','sdk-intel-glow','sdk-intel-atmo','malware-dots','cables-line','cables-future','cables-flow'].forEach(layer => {
       map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', layer, () => { map.getCanvas().style.cursor = ''; });
     });
@@ -831,40 +945,19 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       if (!p) return;
       const coords = e.features[0].geometry.coordinates.slice();
       popup(coords, `<div style="${pStyle}border:1px solid rgba(255,61,61,0.5);">
-        <div style="color:#FF3D3D;font-size:12px;font-weight:700;margin-bottom:6px;">🎯 TARGET: ${p.id}</div>
-        <div style="font-size:9px;color:#E8E6E0;margin-bottom:8px;">${p.city || 'Unknown'}, ${p.country || 'Unknown'} — ${p.isp || 'Unknown ISP'}</div>
+        <div style="color:var(--alert-red);font-size:12px;font-weight:700;margin-bottom:6px;">🎯 TARGET: ${esc(p.id)}</div>
+        <div style="font-size:9px;color:var(--text-primary);margin-bottom:8px;">${esc(p.city || 'Unknown')}, ${esc(p.country || 'Unknown')} — ${esc(p.isp || 'Unknown ISP')}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:9px;">
-          <div><span style="color:#5C5A54;">TYPE</span><br/><span style="color:#00E5FF;">${(p.type || 'UNKNOWN').toUpperCase()}</span></div>
-          <div><span style="color:#5C5A54;">COORDS</span><br/><span style="color:#E8E6E0;">${coords[1].toFixed(3)}°, ${coords[0].toFixed(3)}°</span></div>
+          <div><span style="color:var(--text-muted);">TYPE</span><br/><span style="color:var(--cyan-primary);">${(p.type || 'UNKNOWN').toUpperCase()}</span></div>
+          <div><span style="color:var(--text-muted);">COORDS</span><br/><span style="color:var(--text-primary);">${coords[1].toFixed(3)}°, ${coords[0].toFixed(3)}°</span></div>
         </div>
-        <button onclick="window.openSentraIntel({ type: 'ip', ip: '${p.id}' })" style="width:100%;margin-top:8px;padding:6px 12px;background:rgba(255,109,0,0.15);border:1px solid rgba(255,109,0,0.5);color:#FF6D00;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:bold;letter-spacing:0.1em;border-radius:4px;cursor:pointer;">[ IP INTEL DEEP DIVE ]</button>
+        <button onclick='window.openSentraIntel(${intelArg({ type: 'ip', ip: p.id })})' style="width:100%;margin-top:8px;padding:6px 12px;background:rgba(255,109,0,0.15);border:1px solid rgba(255,109,0,0.5);color:var(--alert-orange);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:bold;letter-spacing:0.1em;border-radius:4px;cursor:pointer;">[ IP INTEL DEEP DIVE ]</button>
       </div>`);
     });
 
-    // ── SCM Suppliers ──
-    map.on('click', 'scm-dots', e => {
-      if (!e.features?.length) return;
-      const p = e.features[0].properties as any;
-      const coords = (e.features[0].geometry as any).coordinates;
-      const color = p.risk_level === 'CRITICAL' ? '#FF1744' : p.risk_level === 'HIGH' ? '#FF9500' : '#00BCD4';
-      const activeThreats = p.active_threats ? JSON.parse(p.active_threats) : [];
-      
-      let threatsHtml = '';
-      if (activeThreats.length > 0) {
-        threatsHtml = `<div style="margin-top:8px;padding-top:6px;border-top:1px solid ${color}40;color:${color};font-size:9px;font-weight:bold;">
-          ACTIVE THREATS:<br/>${activeThreats.map((t: string) => `⚠ ${t}`).join('<br/>')}
-        </div>`;
-      }
-
-      popup(coords, `<div style="${pStyle}border:1px solid ${color}40;">
-        <div style="color:${color};font-size:12px;font-weight:700;margin-bottom:4px;">🏢 ${p.name}</div>
-        <div style="font-size:9px;color:#aaa;margin-bottom:8px;">${p.category} | ${p.city}, ${p.country}</div>
-        <div style="display:grid;grid-template-columns:1fr;gap:4px;font-size:11px;">
-          <div><span style="color:#5C5A54;font-size:9px;">SCM RISK LEVEL</span><br/><span style="color:${color};font-weight:bold;">${p.risk_level}</span></div>
-        </div>
-        ${threatsHtml}
-      </div>`);
-    });
+    // SCM suppliers are surfaced in ScmPanel, not as a map layer. The
+    // 'scm-dots' click handler bound to a layer that is never added, which
+    // made MapLibre query a non-existent layer on every map click.
 
     // ── IP Sweep device click ──
     map.on('click', 'sweep-device-dots', (e: any) => {
@@ -875,17 +968,17 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       const vulns = JSON.parse(p.vulns || '[]');
       const hostnames = JSON.parse(p.hostnames || '[]');
       const riskColors: Record<string, string> = { CRITICAL: '#FF3D3D', HIGH: '#FF6B00', MEDIUM: '#FFD700', LOW: '#76FF03', INFO: '#5C5A54' };
-      popup(coords, `<div style="font-family:monospace;font-size:11px;color:#E8E6E0;">
-        <div style="font-size:13px;font-weight:bold;margin-bottom:6px;color:${p.color};">${p.device_type}</div>
-        <div style="font-size:12px;margin-bottom:8px;color:#fff;">${p.ip}</div>
-        ${hostnames.length > 0 ? `<div style="font-size:9px;color:#8A8880;margin-bottom:6px;">${hostnames.join(', ')}</div>` : ''}
+      popup(coords, `<div style="font-family:monospace;font-size:11px;color:var(--text-primary);">
+        <div style="font-size:13px;font-weight:bold;margin-bottom:6px;color:${esc(p.color)};">${esc(p.device_type)}</div>
+        <div style="font-size:12px;margin-bottom:8px;color:var(--text-primary);">${esc(p.ip)}</div>
+        ${hostnames.length > 0 ? `<div style="font-size:9px;color:var(--text-dim);margin-bottom:6px;">${hostnames.join(', ')}</div>` : ''}
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;">
-          <div><span style="color:#5C5A54;">PORTS</span><br/><span style="color:#E8E6E0;">${ports.length}</span></div>
-          <div><span style="color:#5C5A54;">RISK</span><br/><span style="color:${riskColors[p.risk_level] || '#666'};">${p.risk_level}</span></div>
+          <div><span style="color:var(--text-muted);">PORTS</span><br/><span style="color:var(--text-primary);">${ports.length}</span></div>
+          <div><span style="color:var(--text-muted);">RISK</span><br/><span style="color:${riskColors[p.risk_level] || '#666'};">${esc(p.risk_level)}</span></div>
         </div>
-        <div style="font-size:9px;color:#8A8880;margin-bottom:6px;">Open: ${ports.slice(0, 12).join(', ')}${ports.length > 12 ? ' ...' : ''}</div>
-        ${vulns.length > 0 ? `<div style="font-size:9px;color:#FF3D3D;margin-bottom:6px;">⚠ CVEs: ${vulns.slice(0, 5).join(', ')}${vulns.length > 5 ? ` +${vulns.length - 5} more` : ''}</div>` : ''}
-        <button onclick="window.openSentraIntel({ type: 'ip', ip: '${p.ip}' })" style="width:100%;margin-top:6px;padding:6px 12px;background:rgba(255,109,0,0.15);border:1px solid rgba(255,109,0,0.5);color:#FF6D00;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:bold;letter-spacing:0.1em;border-radius:4px;cursor:pointer;">[ IP INTEL DEEP DIVE ]</button>
+        <div style="font-size:9px;color:var(--text-dim);margin-bottom:6px;">Open: ${ports.slice(0, 12).join(', ')}${ports.length > 12 ? ' ...' : ''}</div>
+        ${vulns.length > 0 ? `<div style="font-size:9px;color:var(--alert-red);margin-bottom:6px;">⚠ CVEs: ${vulns.slice(0, 5).join(', ')}${vulns.length > 5 ? ` +${vulns.length - 5} more` : ''}</div>` : ''}
+        <button onclick='window.openSentraIntel(${intelArg({ type: 'ip', ip: p.ip })})' style="width:100%;margin-top:6px;padding:6px 12px;background:rgba(255,109,0,0.15);border:1px solid rgba(255,109,0,0.5);color:var(--alert-orange);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:bold;letter-spacing:0.1em;border-radius:4px;cursor:pointer;">[ IP INTEL DEEP DIVE ]</button>
       </div>`);
     });
 
@@ -894,14 +987,14 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       if (!e.features?.length) return;
       const p = e.features[0].properties as any;
       const coords = (e.features[0].geometry as any).coordinates;
-      popup(coords, `<div style="${pStyle}border:1px solid ${p.color}40;">
-        <div style="color:${p.color};font-size:12px;font-weight:700;letter-spacing:0.1em;margin-bottom:4px;">🎈 ${p.callsign}</div>
-        <div style="font-size:9px;color:#aaa;margin-bottom:8px;">${p.type.toUpperCase()} / STATUS: ${p.status.toUpperCase()}</div>
+      popup(coords, `<div style="${pStyle}border:1px solid ${esc(p.color)}40;">
+        <div style="color:${esc(p.color)};font-size:12px;font-weight:700;letter-spacing:0.1em;margin-bottom:4px;">🎈 ${esc(p.callsign)}</div>
+        <div style="font-size:9px;color:var(--text-secondary);margin-bottom:8px;">${p.type.toUpperCase()} / STATUS: ${p.status.toUpperCase()}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:9px;">
-          <div><span style="color:#5C5A54;">ALTITUDE</span><br/><span style="color:#E8E6E0;">${p.altitude} m</span></div>
-          <div><span style="color:#5C5A54;">SPEED</span><br/><span style="color:#E8E6E0;">${Math.round(p.speed)} km/h</span></div>
-          <div><span style="color:#5C5A54;">VERT RATE</span><br/><span style="color:${p.verticalRate > 0 ? '#00E676' : '#FF3D3D'};">${p.verticalRate.toFixed(1)} m/s</span></div>
-          <div><span style="color:#5C5A54;">TEMP</span><br/><span style="color:#E8E6E0;">${p.temperature}°C</span></div>
+          <div><span style="color:var(--text-muted);">ALTITUDE</span><br/><span style="color:var(--text-primary);">${p.altitude} m</span></div>
+          <div><span style="color:var(--text-muted);">SPEED</span><br/><span style="color:var(--text-primary);">${Math.round(p.speed)} km/h</span></div>
+          <div><span style="color:var(--text-muted);">VERT RATE</span><br/><span style="color:${p.verticalRate > 0 ? '#00E676' : '#FF3D3D'};">${p.verticalRate.toFixed(1)} m/s</span></div>
+          <div><span style="color:var(--text-muted);">TEMP</span><br/><span style="color:var(--text-primary);">${p.temperature}°C</span></div>
         </div>
       </div>`);
     });
@@ -913,12 +1006,12 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       const coords = (e.features[0].geometry as any).coordinates;
       const color = p.status === 'DANGER' ? '#FF1744' : p.status === 'WARNING' ? '#FF9500' : '#AB47BC';
       popup(coords, `<div style="${pStyle}border:1px solid ${color}40;">
-        <div style="color:${color};font-size:12px;font-weight:700;margin-bottom:4px;">☢️ ${p.name}</div>
-        <div style="font-size:9px;color:#aaa;margin-bottom:8px;">${p.city}, ${p.country}</div>
+        <div style="color:${color};font-size:12px;font-weight:700;margin-bottom:4px;">☢️ ${esc(p.name)}</div>
+        <div style="font-size:9px;color:var(--text-secondary);margin-bottom:8px;">${esc(p.city)}, ${esc(p.country)}</div>
         <div style="display:grid;grid-template-columns:1fr;gap:4px;font-size:11px;">
-          <div><span style="color:#5C5A54;font-size:9px;">READING</span><br/><span style="color:${color};font-weight:bold;">${p.reading} nSv/h</span></div>
-          <div><span style="color:#5C5A54;font-size:9px;">STATUS</span><br/><span style="color:${color};">${p.status}</span></div>
-          <div><span style="color:#5C5A54;font-size:9px;">NETWORK</span><br/><span style="color:#E8E6E0;">${p.network}</span></div>
+          <div><span style="color:var(--text-muted);font-size:9px;">READING</span><br/><span style="color:${color};font-weight:bold;">${p.reading} nSv/h</span></div>
+          <div><span style="color:var(--text-muted);font-size:9px;">STATUS</span><br/><span style="color:${color};">${esc(p.status)}</span></div>
+          <div><span style="color:var(--text-muted);font-size:9px;">NETWORK</span><br/><span style="color:var(--text-primary);">${esc(p.network)}</span></div>
         </div>
       </div>`);
     });
@@ -934,17 +1027,17 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       popup(coords, `<div style="${pStyle}border:1px solid ${color}60;box-shadow:inset 0 0 12px ${color}15;">
         <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid ${color}40;padding-bottom:6px;margin-bottom:8px;">
           <div style="color:${color};font-size:12px;font-weight:700;letter-spacing:0.1em;">${icon} [ ${(p.type||'VESSEL').toUpperCase()} ]</div>
-          <div style="color:#5C5A54;font-size:9px;">FLAG: ${p.flag||'UNK'}</div>
+          <div style="color:var(--text-muted);font-size:9px;">FLAG: ${esc(p.flag || 'UNK')}</div>
         </div>
-        <div style="color:#E8E6E0;font-size:11px;font-weight:bold;margin-bottom:10px;">${p.name || 'UNIDENTIFIED VESSEL'}</div>
+        <div style="color:var(--text-primary);font-size:11px;font-weight:bold;margin-bottom:10px;">${esc(p.name || 'UNIDENTIFIED VESSEL')}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:9px;margin-bottom:8px;background:rgba(0,0,0,0.3);padding:6px;border-radius:4px;">
-          <div><span style="color:#5C5A54;">SPEED</span><br/><span style="color:${color};font-family:monospace;">${Number(p.speed).toFixed(1)} kn</span></div>
-          <div><span style="color:#5C5A54;">HEADING</span><br/><span style="color:${color};font-family:monospace;">${Number(p.heading).toFixed(0)}°</span></div>
-          <div><span style="color:#5C5A54;">LATITUDE</span><br/><span style="color:#E8E6E0;font-family:monospace;">${coords[1].toFixed(4)}°</span></div>
-          <div><span style="color:#5C5A54;">LONGITUDE</span><br/><span style="color:#E8E6E0;font-family:monospace;">${coords[0].toFixed(4)}°</span></div>
+          <div><span style="color:var(--text-muted);">SPEED</span><br/><span style="color:${color};font-family:monospace;">${Number(p.speed).toFixed(1)} kn</span></div>
+          <div><span style="color:var(--text-muted);">HEADING</span><br/><span style="color:${color};font-family:monospace;">${Number(p.heading).toFixed(0)}°</span></div>
+          <div><span style="color:var(--text-muted);">LATITUDE</span><br/><span style="color:var(--text-primary);font-family:monospace;">${coords[1].toFixed(4)}°</span></div>
+          <div><span style="color:var(--text-muted);">LONGITUDE</span><br/><span style="color:var(--text-primary);font-family:monospace;">${coords[0].toFixed(4)}°</span></div>
         </div>
-        <div><span style="color:#5C5A54;font-size:9px;">DESTINATION: </span><span style="color:#E8E6E0;font-size:9px;">${p.destination || 'UNKNOWN'}</span></div>
-        <a href="https://www.marinetraffic.com/en/ais/details/ships/mmsi:${p.mmsi}" target="_blank" style="${linkStyle}flex:1;text-align:center;color:${color};border:1px solid ${color}40;background:${color}15;display:inline-block;width:100%;box-sizing:border-box;margin-top:4px;">[ OPEN SOURCE ↗ ]</a>
+        <div><span style="color:var(--text-muted);font-size:9px;">DESTINATION: </span><span style="color:var(--text-primary);font-size:9px;">${esc(p.destination || 'UNKNOWN')}</span></div>
+        <a href="https://www.marinetraffic.com/en/ais/details/ships/mmsi:${esc(p.mmsi)}" target="_blank" style="${linkStyle}flex:1;text-align:center;color:${color};border:1px solid ${color}40;background:${color}15;display:inline-block;width:100%;box-sizing:border-box;margin-top:4px;">[ OPEN SOURCE ↗ ]</a>
       </div>`);
     });
 
@@ -955,15 +1048,15 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       const coords = (e.features[0].geometry as any).coordinates;
       const iconEmoji = p.icon === 'cyclone' ? '🌀' : p.icon === 'volcano' ? '🌋' : '⚡';
       popup(coords, `<div style="${pStyle}border:1px solid rgba(224,64,251,0.3);">
-        <div style="color:#E040FB;font-size:14px;font-weight:700;margin-bottom:6px;">${iconEmoji} ${p.type || 'Weather Event'}</div>
-        <div style="font-size:10px;color:#E8E6E0;margin-bottom:8px;line-height:1.4;">${p.title || 'Unknown event'}</div>
+        <div style="color:var(--accent-weather);font-size:14px;font-weight:700;margin-bottom:6px;">${iconEmoji} ${esc(p.type || 'Weather Event')}</div>
+        <div style="font-size:10px;color:var(--text-primary);margin-bottom:8px;line-height:1.4;">${esc(p.title || 'Unknown event')}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:9px;margin-bottom:8px;">
-          <div><span style="color:#5C5A54;">SEVERITY</span><br/><span style="color:${p.severity === 'high' ? '#FF1744' : '#FFD700'};">${(p.severity||'low').toUpperCase()}</span></div>
-          <div><span style="color:#5C5A54;">COORDS</span><br/><span style="color:#E8E6E0;">${coords[1].toFixed(3)}°, ${coords[0].toFixed(3)}°</span></div>
+          <div><span style="color:var(--text-muted);">SEVERITY</span><br/><span style="color:${p.severity === 'high' ? '#FF1744' : '#FFD700'};">${(p.severity||'low').toUpperCase()}</span></div>
+          <div><span style="color:var(--text-muted);">COORDS</span><br/><span style="color:var(--text-primary);">${coords[1].toFixed(3)}°, ${coords[0].toFixed(3)}°</span></div>
         </div>
         <div style="display:flex;gap:6px;">
-          ${p.source ? `<a href="${p.source}" target="_blank" style="${linkStyle}color:#E040FB;border:1px solid rgba(224,64,251,0.4);background:rgba(224,64,251,0.1);">📡 SOURCE</a>` : ''}
-          <a href="https://eonet.gsfc.nasa.gov/api/v3/events/${p.id || ''}" target="_blank" style="${linkStyle}color:#D4AF37;border:1px solid rgba(212,175,55,0.4);background:rgba(212,175,55,0.1);">🛰️ NASA EONET</a>
+          ${p.source ? `<a href="${esc(p.source)}" target="_blank" style="${linkStyle}color:var(--accent-weather);border:1px solid rgba(224,64,251,0.4);background:rgba(224,64,251,0.1);">📡 SOURCE</a>` : ''}
+          <a href="https://eonet.gsfc.nasa.gov/api/v3/events/${esc(p.id || '')}" target="_blank" style="${linkStyle}color:var(--gold-primary);border:1px solid rgba(var(--gold-rgb),0.4);background:rgba(var(--gold-rgb),0.1);">🛰️ NASA EONET</a>
         </div>
       </div>`);
     });
@@ -975,16 +1068,16 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       const coords = (e.features[0].geometry as any).coordinates;
       const statusColor = p.status.includes('SEISMIC RISK') ? '#FF9500' : p.status === 'Active Conflict Zone' ? '#FF1744' : p.status === 'Operational' ? '#76FF03' : '#757575';
       popup(coords, `<div style="${pStyle}border:1px solid rgba(118,255,3,0.3);">
-        <div style="color:#76FF03;font-size:14px;font-weight:700;margin-bottom:4px;">☢️ ${p.name || 'Nuclear Facility'}</div>
+        <div style="color:var(--accent-nuclear);font-size:14px;font-weight:700;margin-bottom:4px;">☢️ ${esc(p.name || 'Nuclear Facility')}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:9px;margin-bottom:8px;">
-          <div><span style="color:#5C5A54;">STATUS</span><br/><span style="color:${statusColor};">${p.status || '—'}</span></div>
-          <div><span style="color:#5C5A54;">CITY</span><br/><span style="color:#E8E6E0;">${p.city || '—'}, ${p.country || ''}</span></div>
-          <div><span style="color:#5C5A54;">REACTORS</span><br/><span style="color:#76FF03;">${p.reactors || '—'}</span></div>
-          <div><span style="color:#5C5A54;">CAPACITY</span><br/><span style="color:#E8E6E0;">${p.capacityMW ? p.capacityMW.toLocaleString() + ' MW' : '—'}</span></div>
-          <div><span style="color:#5C5A54;">OWNER</span><br/><span style="color:#E8E6E0;">${p.owner || '—'}</span></div>
-          <div><span style="color:#5C5A54;">COORDS</span><br/><span style="color:#E8E6E0;">${coords[1].toFixed(3)}°, ${coords[0].toFixed(3)}°</span></div>
+          <div><span style="color:var(--text-muted);">STATUS</span><br/><span style="color:${statusColor};">${esc(p.status || '—')}</span></div>
+          <div><span style="color:var(--text-muted);">CITY</span><br/><span style="color:var(--text-primary);">${esc(p.city || '—')}, ${esc(p.country || '')}</span></div>
+          <div><span style="color:var(--text-muted);">REACTORS</span><br/><span style="color:var(--accent-nuclear);">${p.reactors || '—'}</span></div>
+          <div><span style="color:var(--text-muted);">CAPACITY</span><br/><span style="color:var(--text-primary);">${p.capacityMW ? p.capacityMW.toLocaleString() + ' MW' : '—'}</span></div>
+          <div><span style="color:var(--text-muted);">OWNER</span><br/><span style="color:var(--text-primary);">${esc(p.owner || '—')}</span></div>
+          <div><span style="color:var(--text-muted);">COORDS</span><br/><span style="color:var(--text-primary);">${coords[1].toFixed(3)}°, ${coords[0].toFixed(3)}°</span></div>
         </div>
-        <a href="https://www.google.com/maps/@${coords[1]},${coords[0]},14z/data=!3m1!1e3" target="_blank" style="${linkStyle}color:#76FF03;border:1px solid rgba(118,255,3,0.4);background:rgba(118,255,3,0.1);">SATELLITE VIEW</a>
+        <a href="https://www.google.com/maps/@${coords[1]},${coords[0]},14z/data=!3m1!1e3" target="_blank" style="${linkStyle}color:var(--accent-nuclear);border:1px solid rgba(118,255,3,0.4);background:rgba(118,255,3,0.1);">SATELLITE VIEW</a>
       </div>`);
     });
 
@@ -999,17 +1092,17 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       const congestionHtml = p.congestion ? `
         <div style="margin-top:8px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.1);">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;">
-            <div><span style="color:#5C5A54;font-size:9px;">CONGESTION</span><br/><span style="color:${p.congestion === 'SEVERE' ? '#FF1744' : p.congestion === 'CONGESTED' ? '#FF9500' : '#00E676'};font-weight:bold;font-size:10px;">${p.congestion}</span></div>
-            <div><span style="color:#5C5A54;font-size:9px;">EST. DWELL TIME</span><br/><span style="color:#E8E6E0;font-weight:bold;font-size:10px;">${p.dwell_time || 'Unknown'}</span></div>
+            <div><span style="color:var(--text-muted);font-size:9px;">CONGESTION</span><br/><span style="color:${p.congestion === 'SEVERE' ? '#FF1744' : p.congestion === 'CONGESTED' ? '#FF9500' : '#00E676'};font-weight:bold;font-size:10px;">${esc(p.congestion)}</span></div>
+            <div><span style="color:var(--text-muted);font-size:9px;">EST. DWELL TIME</span><br/><span style="color:var(--text-primary);font-weight:bold;font-size:10px;">${esc(p.dwell_time || 'Unknown')}</span></div>
           </div>
         </div>` : '';
 
       popup(coords, `<div style="${pStyle}border:1px solid ${typeColor}40;">
-        <div style="color:${typeColor};font-weight:bold;font-size:11px;margin-bottom:4px;">${p.name}</div>
-        <div style="color:#999;font-size:9px;margin-bottom:6px;">${typeLabel} — ${p.country}</div>
-        ${p.volume ? `<div style="font-size:9px;color:#aaa;">Volume: <span style="color:${typeColor};font-weight:bold;">${p.volume}</span></div>` : ''}
-        ${p.fleet ? `<div style="font-size:9px;color:#aaa;">Fleet: <span style="color:${typeColor};font-weight:bold;">${p.fleet}</span></div>` : ''}
-        ${p.rank ? `<div style="font-size:9px;color:#aaa;">Global Rank: <span style="color:${typeColor};font-weight:bold;">#${p.rank}</span></div>` : ''}
+        <div style="color:${typeColor};font-weight:bold;font-size:11px;margin-bottom:4px;">${esc(p.name)}</div>
+        <div style="color:var(--text-secondary);font-size:9px;margin-bottom:6px;">${typeLabel} — ${esc(p.country)}</div>
+        ${p.volume ? `<div style="font-size:9px;color:var(--text-secondary);">Volume: <span style="color:${typeColor};font-weight:bold;">${esc(p.volume)}</span></div>` : ''}
+        ${p.fleet ? `<div style="font-size:9px;color:var(--text-secondary);">Fleet: <span style="color:${typeColor};font-weight:bold;">${esc(p.fleet)}</span></div>` : ''}
+        ${p.rank ? `<div style="font-size:9px;color:var(--text-secondary);">Global Rank: <span style="color:${typeColor};font-weight:bold;">#${p.rank}</span></div>` : ''}
         ${congestionHtml}
       </div>`);
     });
@@ -1021,10 +1114,49 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       const coords = (e.features![0].geometry as any).coordinates;
       const riskCol = p.risk === 'CRITICAL' ? '#FF1744' : p.risk === 'HIGH' ? '#FF9500' : p.risk === 'ELEVATED' ? '#FFD700' : '#00E676';
       popup(coords, `<div style="${pStyle}border:1px solid ${riskCol}40;">
-        <div style="color:#FF9500;font-weight:bold;font-size:11px;margin-bottom:4px;">${p.name}</div>
-        <div style="font-size:9px;color:#aaa;">Traffic: <span style="color:#fff;">${p.traffic}</span></div>
-        <div style="font-size:9px;color:#aaa;">Risk: <span style="color:${riskCol};font-weight:bold;">${p.risk}</span></div>
+        <div style="color:var(--alert-orange);font-weight:bold;font-size:11px;margin-bottom:4px;">${esc(p.name)}</div>
+        <div style="font-size:9px;color:var(--text-secondary);">Traffic: <span style="color:var(--text-primary);">${esc(p.traffic)}</span></div>
+        <div style="font-size:9px;color:var(--text-secondary);">Risk: <span style="color:${riskCol};font-weight:bold;">${p.risk}</span></div>
       </div>`);
+    });
+
+    // ── Subsea cables ──
+    ['cables-line', 'cables-future', 'cables-flow'].forEach(layer => {
+      map.on('click', layer, e => {
+        if (!e.features?.length) return;
+        const p = e.features[0].properties as any;
+        const status = String(p.status || '');
+        const color = status === 'operational' ? '#26C6DA'
+          : status === 'under_construction' ? '#F9A825'
+          : status === 'planned' ? '#7E57C2'
+          : status === 'not_operational' ? '#D32F2F' : '#546E7A';
+        // `status_basis` distinguishes an upstream fact from a locally derived one.
+        const derived = String(p.status_basis || '').startsWith('derived:');
+        popup([e.lngLat.lng, e.lngLat.lat], `<div style="${pStyle}border:1px solid ${color}40;">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+            <div style="width:8px;height:8px;border-radius:50%;background:${color};box-shadow:0 0 8px ${color};"></div>
+            <span style="color:${color};font-size:12px;font-weight:700;letter-spacing:0.08em;">${esc(p.name || 'SUBSEA CABLE')}</span>
+          </div>
+          <div style="display:inline-block;padding:2px 8px;border-radius:3px;background:${color}1A;border:1px solid ${color}55;color:${color};font-size:9px;font-weight:700;letter-spacing:0.12em;margin-bottom:10px;">
+            ${CABLE_STATUS_LABEL[status] || 'UNKNOWN'}${derived ? ' *' : ''}
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:9px;margin-bottom:8px;">
+            <div><span style="color:var(--text-muted);">READY FOR SERVICE</span><br/><span style="color:var(--text-primary);">${esc(p.rfs || '—')}</span></div>
+            <div><span style="color:var(--text-muted);">LENGTH</span><br/><span style="color:var(--text-primary);">${esc(p.length || '—')}</span></div>
+            <div><span style="color:var(--text-muted);">LANDING POINTS</span><br/><span style="color:var(--text-primary);">${p.landing_point_count ?? '—'}</span></div>
+            <div><span style="color:var(--text-muted);">SUPPLIER</span><br/><span style="color:var(--text-primary);">${esc(p.suppliers || '—')}</span></div>
+          </div>
+          ${p.owners ? `<div style="font-size:9px;margin-bottom:6px;"><span style="color:var(--text-muted);">OWNERS</span><br/><span style="color:var(--text-primary);">${esc(p.owners)}</span></div>` : ''}
+          ${p.landing_countries ? `<div style="font-size:9px;margin-bottom:8px;"><span style="color:var(--text-muted);">COUNTRIES</span><br/><span style="color:var(--text-primary);">${esc(p.landing_countries)}</span></div>` : ''}
+          ${derived ? `<div style="font-size:8px;color:var(--text-dim);margin-bottom:8px;line-height:1.4;">* Status inferred from the announced service date, not stated by the source. Basis: ${esc(p.status_basis)}</div>` : ''}
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            ${p.url ? `<a href="${p.url}" target="_blank" rel="noopener noreferrer" style="${linkStyle}color:${color};border:1px solid ${color}55;background:${color}18;">OPERATOR ↗</a>` : ''}
+            <a href="${p.source_url || 'https://www.submarinecablemap.com/'}" target="_blank" rel="noopener noreferrer" style="${linkStyle}color:var(--text-primary);border:1px solid rgba(255,255,255,0.2);background:rgba(255,255,255,0.05);">${esc(p.source || 'SOURCE')} ↗</a>
+          </div>
+        </div>`);
+      });
+      map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
+      map.on('mouseleave', layer, () => { map.getCanvas().style.cursor = ''; });
     });
 
     // ── Live News (opens feed viewer) ──
@@ -1075,12 +1207,11 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
   // Flight data → GeoJSON (GPU rendered)
   useEffect(() => {
     if (!mapReady) return;
-    const toFeatures = (arr: any[], decimate: number = 1) => {
-      let filtered = arr || [];
-      if (decimate > 1) {
-        filtered = filtered.filter((_, i) => i % decimate === 0);
-      }
-      return filtered.map((f: any) => ({
+    // No decimation. These are GPU-rendered symbol layers that handle tens of
+    // thousands of features; dropping 9 of every 10 commercial aircraft was
+    // hiding ~9,000 of the ~10,000 tracks the feed already returns.
+    const toFeatures = (arr: any[]) => {
+      return (arr || []).map((f: any) => ({
         type: 'Feature' as const, geometry: { type: 'Point' as const, coordinates: [f.lng, f.lat] },
         properties: {
           callsign: f.callsign,
@@ -1107,9 +1238,9 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
         },
       }));
     };
-    setGeo('flights', activeLayers.flights ? toFeatures(data.commercial_flights, 10) : []);
-    setGeo('private-fl', activeLayers.private ? toFeatures(data.private_flights, 2) : []);
-    setGeo('jets', activeLayers.jets ? toFeatures(data.private_jets, 2) : []);
+    setGeo('flights', activeLayers.flights ? toFeatures(data.commercial_flights) : []);
+    setGeo('private-fl', activeLayers.private ? toFeatures(data.private_flights) : []);
+    setGeo('jets', activeLayers.jets ? toFeatures(data.private_jets) : []);
     setGeo('military', activeLayers.military ? toFeatures(data.military_flights) : []);
   }, [mapReady, data.commercial_flights, data.private_flights, data.private_jets, data.military_flights, activeLayers.flights, activeLayers.private, activeLayers.jets, activeLayers.military]);
 
@@ -1212,7 +1343,7 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
 
   useEffect(() => {
     if (!mapReady) return;
-    setGeo('cctv', activeLayers.cctv && data.cameras ? data.cameras.map((c: any) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [c.lng, c.lat] }, properties: { id: c.id, name: c.name, city: c.city, country: c.country, source: c.source, feed_url: c.feed_url, stream_url: c.stream_url, stream_type: c.stream_type, external_url: c.external_url } })) : []);
+    setGeo('cctv', activeLayers.cctv && data.cameras ? data.cameras.map((c: any) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [c.lng, c.lat] }, properties: { id: c.id, name: c.name, city: c.city, country: c.country, source: c.source, feed_url: c.feed_url, stream_url: c.stream_url, stream_type: c.stream_type, external_url: c.external_url, video_url: c.video_url || '', refresh_ms: c.refresh_ms || 0, video_auth_required: c.video_auth_required ? '1' : '' } })) : []);
   }, [mapReady, data.cameras, activeLayers.cctv, setGeo]);
 
   useEffect(() => {
@@ -1248,46 +1379,40 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
   }, [mapReady, data.radiation, activeLayers.radiation, setGeo]);
 
   // ══ Sentra Mi8 SDK — Lattice Sensor Mesh ══
-  // Uses real submarine cable data for SEA domain, curated routes for AIR/INTEL
+  // Subsea cables are owned by the dedicated `cables` layer below; the SDK mesh
+  // no longer redraws them, which previously double-rendered every cable.
   useEffect(() => {
     if (!mapReady) return;
     setGeo('sdk-entities', []);
+    setGeo('sdk-links', []);
+  }, [mapReady, activeLayers.sdk_air, activeLayers.sdk_naval, setGeo]);
 
-    const anySDK = activeLayers.sdk_sea || activeLayers.sdk_air || activeLayers.sdk_naval;
-    if (!anySDK) {
-      setGeo('sdk-links', []);
-      return;
-    }
+  // ══ Subsea fibre-optic cables ══
+  useEffect(() => {
+    if (!mapReady) return;
+    setGeo('cables', activeLayers.cables && Array.isArray(data.submarine_cables) ? data.submarine_cables : []);
+  }, [mapReady, data.submarine_cables, activeLayers.cables, setGeo]);
 
-    const links: any[] = [];
+  // Animate the traffic pulse only while the layer is on — the timer is the
+  // only per-frame cost this layer carries, so it must not outlive visibility.
+  useEffect(() => {
+    if (!mapReady || !mapRef.current) return;
+    if (!activeLayers.cables) return;
+    const map = mapRef.current;
+    if (!map.getLayer('cables-flow')) return;
 
-    // ── SEA DOMAIN: Real submarine cable data (1-for-1 Match) ──
-    if (activeLayers.sdk_sea && data.submarine_cables) {
-      const ignoredColors = new Set(['#9BB5CC', '#A0B8CD', '#8EABC2', '#9bb5cc', '#a0b8cd', '#8eabc2']);
-      for (const cable of data.submarine_cables) {
-        if (!cable.geometry) continue;
-        
-        // Remove the light blue background arcs
-        if (cable.properties?.color && ignoredColors.has(cable.properties.color)) continue;
-        
-        links.push({
-          type: 'Feature',
-          geometry: cable.geometry, // Raw topographic paths exactly from Submarine Map
-          properties: {
-            domain: 'SEA',
-            fromName: cable.properties?.name || 'Submarine Cable',
-            toName: cable.properties?.landing_points || '',
-            source: 'Global Subsea Cable Network',
-            url: 'https://www.submarinecablemap.com/',
-            ...cable.properties,
-            color: '#1976D2', // Darker blue as requested, more transparent in layer paint
-          },
-        });
+    let step = 0;
+    const timer = setInterval(() => {
+      step = (step + 1) % CABLE_FLOW_DASHES.length;
+      try {
+        map.setPaintProperty('cables-flow', 'line-dasharray', CABLE_FLOW_DASHES[step]);
+      } catch {
+        // Style reload can remove the layer mid-interval; the next effect run re-arms it.
       }
-    }
+    }, CABLE_FLOW_STEP_MS);
 
-    setGeo('sdk-links', links);
-  }, [mapReady, activeLayers.sdk_sea, activeLayers.sdk_air, activeLayers.sdk_naval, data.submarine_cables, setGeo]);
+    return () => clearInterval(timer);
+  }, [mapReady, activeLayers.cables]);
 
   useEffect(() => {
     if (!mapReady) return;
@@ -1308,29 +1433,39 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
 
   useEffect(() => {
     if (!mapReady) return;
-    // 🔴 CONFLICT ZONES - center-point warning markers 🔴
-    const CONFLICT_ZONES = [
-      { label: 'UKRAINE WAR', severity: 'war', lat: 48.5, lng: 31.2, description: 'Live reporting: Ongoing Russian invasion of Ukraine and active frontlines.', sourceUrl: 'https://liveuamap.com/' },
-      { label: 'GAZA CONFLICT', severity: 'war', lat: 31.35, lng: 34.35, description: 'Live reporting: Active military operations and humanitarian crisis in Gaza.', sourceUrl: 'https://israelpalestine.liveuamap.com/' },
-      { label: 'LEBANON BORDER', severity: 'high', lat: 33.377, lng: 35.483, description: 'Live reporting: An airstrike targeted the city of Nabatieh.', sourceUrl: 'https://lebanon.liveuamap.com/en/2026/6-june-11-an-airstrike-targeted-the-city-of-nabatieh' },
-      { label: 'SUDAN CIVIL WAR', severity: 'war', lat: 15.0, lng: 30.0, description: 'Live reporting: Armed conflict between SAF and RSF factions across Sudan.', sourceUrl: 'https://sudan.liveuamap.com/' },
-      { label: 'MYANMAR CONFLICT', severity: 'war', lat: 19.5, lng: 96.5, description: 'Live reporting: Internal conflict and military junta opposition operations.', sourceUrl: 'https://myanmar.liveuamap.com/' },
-      { label: 'DRC EASTERN CONFLICT', severity: 'war', lat: -1.0, lng: 28.5, description: 'M23 rebel offensive and regional instability.' },
-      { label: 'YEMEN WAR', severity: 'war', lat: 15.5, lng: 48.0, description: 'Houthi militant operations and Red Sea maritime threats.', sourceUrl: 'https://yemen.liveuamap.com/' },
-      { label: 'SYRIA', severity: 'high', lat: 35.0, lng: 38.5, description: 'Live reporting: Ongoing civil war and localized insurgencies.', sourceUrl: 'https://syria.liveuamap.com/' },
-      { label: 'TAIWAN STRAIT', severity: 'elevated', lat: 24.0, lng: 119.5, description: 'Elevated military drills and regional tension.' },
-      { label: 'KOREAN DMZ', severity: 'elevated', lat: 38.3, lng: 127.0, description: 'Ongoing cross-border tension and military posturing.' },
-      { label: 'SAHEL INSTABILITY', severity: 'high', lat: 14.0, lng: 5.0, description: 'Insurgencies and military coups across the Sahel region.' },
+    // Static geographic reference markers for long-running conflicts. These are
+    // region labels, not incident reporting — the descriptions previously read
+    // "Live reporting: ..." and one carried a specific dated airstrike, which
+    // presented a hardcoded list as a live feed. Live incidents come from
+    // /api/gdelt and the news layer.
+    const CONFLICT_REGIONS = [
+      { label: 'UKRAINE', severity: 'war', lat: 48.5, lng: 31.2, description: 'Russian invasion of Ukraine; active frontlines.', sourceUrl: 'https://liveuamap.com/' },
+      { label: 'GAZA', severity: 'war', lat: 31.35, lng: 34.35, description: 'Military operations and humanitarian crisis in Gaza.', sourceUrl: 'https://israelpalestine.liveuamap.com/' },
+      { label: 'LEBANON BORDER', severity: 'high', lat: 33.377, lng: 35.483, description: 'Cross-border strikes and militia activity in southern Lebanon.', sourceUrl: 'https://lebanon.liveuamap.com/' },
+      { label: 'SUDAN', severity: 'war', lat: 15.0, lng: 30.0, description: 'Armed conflict between SAF and RSF factions.', sourceUrl: 'https://sudan.liveuamap.com/' },
+      { label: 'MYANMAR', severity: 'war', lat: 19.5, lng: 96.5, description: 'Internal conflict and military junta opposition operations.', sourceUrl: 'https://myanmar.liveuamap.com/' },
+      { label: 'DRC EAST', severity: 'war', lat: -1.0, lng: 28.5, description: 'M23 rebel offensive and regional instability.' },
+      { label: 'YEMEN', severity: 'war', lat: 15.5, lng: 48.0, description: 'Houthi militant operations and Red Sea maritime threats.', sourceUrl: 'https://yemen.liveuamap.com/' },
+      { label: 'SYRIA', severity: 'high', lat: 35.0, lng: 38.5, description: 'Civil war and localised insurgencies.', sourceUrl: 'https://syria.liveuamap.com/' },
+      { label: 'TAIWAN STRAIT', severity: 'elevated', lat: 24.0, lng: 119.5, description: 'Military drills and regional tension.' },
+      { label: 'KOREAN DMZ', severity: 'elevated', lat: 38.3, lng: 127.0, description: 'Cross-border tension and military posturing.' },
+      { label: 'SAHEL', severity: 'high', lat: 14.0, lng: 5.0, description: 'Insurgencies and military coups across the Sahel.' },
       { label: 'SOMALIA', severity: 'high', lat: 5.0, lng: 46.0, description: 'Al-Shabaab insurgency and counter-terrorism operations.' },
-      { label: 'RED SEA THREAT', severity: 'high', lat: 16.0, lng: 40.0, description: 'Houthi anti-ship missile and drone attacks on maritime traffic.', sourceUrl: 'https://yemen.liveuamap.com/' },
+      { label: 'RED SEA', severity: 'high', lat: 16.0, lng: 40.0, description: 'Anti-ship missile and drone threat to maritime traffic.', sourceUrl: 'https://yemen.liveuamap.com/' },
     ];
-    const conflictFeatures = CONFLICT_ZONES.map(z => ({
+    const conflictFeatures = activeLayers.conflict_zones ? CONFLICT_REGIONS.map(z => ({
       type: 'Feature' as const,
       geometry: { type: 'Point' as const, coordinates: [z.lng, z.lat] },
-      properties: { label: z.label, severity: z.severity, description: z.description, sourceUrl: z.sourceUrl },
-    }));
+      properties: {
+        label: z.label,
+        severity: z.severity,
+        description: z.description,
+        sourceUrl: z.sourceUrl,
+        basis: 'static regional reference marker — not live incident reporting',
+      },
+    })) : [];
     setGeo('conflict-zones', conflictFeatures);
-  }, [mapReady, setGeo]);
+  }, [mapReady, activeLayers.conflict_zones, setGeo]);
 
 
   // Visibility
@@ -1354,16 +1489,16 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
     setVis(['infra-glow','infra-dots','infra-label'], activeLayers.infrastructure);
     setVis(['maritime-glow','maritime-dots','maritime-label'], activeLayers.maritime);
     setVis(['choke-glow','choke-dots','choke-label'], activeLayers.maritime);
-    setVis(['ship-dots','ship-label'], activeLayers.maritime);
+    setVis(['ship-halo','ship-dots','ship-label'], activeLayers.maritime);
     setVis(['news-glow','news-dots','news-label'], activeLayers.live_news);
     setVis(['sigint-news-glow','sigint-news-dots','sigint-news-label'], activeLayers.news_intel);
-    setVis(['conflict-icons'], activeLayers.conflict_zones !== false);
+    setVis(['conflict-icons'], activeLayers.conflict_zones);
 
     setVis(['balloon-dots','balloon-label'], activeLayers.balloons);
     setVis(['rad-glow','rad-dots','rad-label'], activeLayers.radiation);
-    setVis(['sdk-sea','sdk-sea-glow','sdk-sea-atmo'], activeLayers.sdk_sea !== false);
     setVis(['sdk-air','sdk-air-glow','sdk-air-atmo'], activeLayers.sdk_air !== false);
     setVis(['sdk-intel','sdk-intel-glow','sdk-intel-atmo'], activeLayers.sdk_naval !== false);
+    setVis(['cables-halo','cables-line','cables-future','cables-flow','cables-label'], activeLayers.cables);
     // Sweep layers always visible when data is present (controlled by useEffect)
     setVis(['sweep-connections','sweep-pulse-ring','sweep-device-glow','sweep-device-dots','sweep-device-labels'], true);
   }, [mapReady, activeLayers, setVis]);

@@ -77,12 +77,13 @@ interface IptvChannel {
   sourceUrl: string;
 }
 
+// Severity encoding — identical in both themes so red always means critical.
 const RISK_COLORS: Record<string, string> = {
-  HIGH: '#FF3D3D',
-  CRITICAL: '#FF1744',
-  ELEVATED: '#FF9500',
-  MODERATE: '#FFD700',
-  LOW: '#00E676',
+  HIGH: 'var(--severity-high)',
+  CRITICAL: 'var(--severity-critical)',
+  ELEVATED: 'var(--severity-elevated)',
+  MODERATE: 'var(--severity-elevated)',
+  LOW: 'var(--severity-nominal)',
 };
 
 const BUILTIN_FEEDS = [
@@ -258,7 +259,7 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: 0.5, duration: 0.6 }}
-      className={`glass-panel flex flex-col overflow-hidden pointer-events-auto transition-all duration-300 ${maximized ? 'fixed inset-4 z-[9999] bg-[#0a0a09]/95 backdrop-blur-3xl' : 'shrink-0 h-[500px] max-h-[80vh] resize-y'}`}
+      className={`glass-panel flex flex-col overflow-hidden pointer-events-auto transition-all duration-300 ${maximized ? 'fixed inset-4 z-[9999] bg-[var(--surface-0)]/95 backdrop-blur-3xl' : 'shrink-0 h-[500px] max-h-[80vh] resize-y'}`}
     >
       <div
         onClick={() => setExpanded(!expanded)}
@@ -288,14 +289,14 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className={`flex flex-col flex-1 min-h-0 ${maximized ? 'bg-[#0a0a09]' : 'bg-transparent'}`}
+            className={`flex flex-col flex-1 min-h-0 ${maximized ? 'bg-[var(--surface-0)]' : 'bg-transparent'}`}
           >
-            <div className={`flex-shrink-0 flex gap-1 ${maximized ? 'px-6 py-4 border-b border-[#2A2A28] bg-[#111111]' : 'px-3 py-2 border-b border-[rgba(255,255,255,0.05)]'}`}>
+            <div className={`flex-shrink-0 flex gap-1 ${maximized ? 'px-6 py-4 border-b border-[var(--surface-3)] bg-[var(--surface-1)]' : 'px-3 py-2 border-b border-[rgba(255,255,255,0.05)]'}`}>
               {(['all', 'news', 'quakes', 'feeds'] as const).map(f => (
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
-                  className={`px-3 py-1.5 rounded text-[10px] font-mono tracking-wider transition-all ${filter === f ? 'bg-[var(--cyan-primary)]/20 text-[var(--cyan-primary)] border border-[var(--cyan-primary)]/50' : 'text-[#8A8880] border border-transparent hover:text-[#E8E6E0] hover:bg-[#2A2A28]'}`}
+                  className={`px-3 py-1.5 rounded text-[10px] font-mono tracking-wider transition-all ${filter === f ? 'bg-[var(--cyan-primary)]/20 text-[var(--cyan-primary)] border border-[var(--cyan-primary)]/50' : 'text-[var(--text-dim)] border border-transparent hover:text-[var(--text-primary)] hover:bg-[var(--surface-3)]'}`}
                 >
                   {f.toUpperCase()}
                 </button>
@@ -305,13 +306,13 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
             <div className={`flex-1 overflow-y-auto styled-scrollbar ${maximized ? 'p-6' : 'p-3'}`}>
               {filter === 'feeds' ? (
                 <div className="space-y-3">
-                  <div className="rounded-lg bg-[#111111]/70 border border-[#2A2A28] p-3 space-y-2">
+                  <div className="rounded-lg bg-[var(--surface-1)]/70 border border-[var(--surface-3)] p-3 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
                         <Tv className="w-3.5 h-3.5 text-[#EC407A] flex-shrink-0" />
-                        <span className="text-[10px] font-mono font-bold tracking-widest text-[#E8E6E0] truncate">IPTV COUNTRY LIST</span>
+                        <span className="text-[10px] font-mono font-bold tracking-widest text-[var(--text-primary)] truncate">IPTV COUNTRY LIST</span>
                       </div>
-                      <span className="text-[8px] font-mono text-[#8A8880]">{iptvChannels.length.toLocaleString()} CHANNELS</span>
+                      <span className="text-[8px] font-mono text-[var(--text-dim)]">{iptvChannels.length.toLocaleString()} CHANNELS</span>
                     </div>
                     <select
                       value={iptvCountry}
@@ -320,7 +321,7 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
                         setIptvChannels([]);
                         setIptvCountry(event.target.value);
                       }}
-                      className="w-full bg-black/40 border border-[#2A2A28] rounded px-2 py-2 text-[10px] font-mono text-[#E8E6E0] outline-none focus:border-[var(--cyan-primary)]"
+                      className="w-full bg-black/40 border border-[var(--surface-3)] rounded px-2 py-2 text-[10px] font-mono text-[var(--text-primary)] outline-none focus:border-[var(--cyan-primary)]"
                     >
                       {iptvCountries.length === 0 && <option value={iptvCountry}>{iptvCountry}</option>}
                       {iptvCountries.map((country) => (
@@ -330,12 +331,12 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
                       ))}
                     </select>
                     <div className="relative">
-                      <Search className="w-3 h-3 text-[#8A8880] absolute left-2 top-1/2 -translate-y-1/2" />
+                      <Search className="w-3 h-3 text-[var(--text-dim)] absolute left-2 top-1/2 -translate-y-1/2" />
                       <input
                         value={iptvSearch}
                         onChange={(event) => setIptvSearch(event.target.value)}
                         placeholder="Search channels"
-                        className="w-full bg-black/40 border border-[#2A2A28] rounded pl-7 pr-2 py-2 text-[10px] font-mono text-[#E8E6E0] placeholder:text-[#5C5A54] outline-none focus:border-[var(--cyan-primary)]"
+                        className="w-full bg-black/40 border border-[var(--surface-3)] rounded pl-7 pr-2 py-2 text-[10px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none focus:border-[var(--cyan-primary)]"
                       />
                     </div>
                     {iptvError && (
@@ -344,14 +345,14 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
                       </div>
                     )}
                     {iptvUpdatedAt && (
-                      <div className="text-[8px] font-mono text-[#5C5A54]">
+                      <div className="text-[8px] font-mono text-[var(--text-muted)]">
                         UPDATED {new Date(iptvUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} {selectedCountry?.name ? `// ${selectedCountry.name}` : ''}
                       </div>
                     )}
                   </div>
 
                   <div className="space-y-2">
-                    <div className="text-[9px] font-mono text-[#8A8880] tracking-widest">VERIFIED BROADCAST FEEDS</div>
+                    <div className="text-[9px] font-mono text-[var(--text-dim)] tracking-widest">VERIFIED BROADCAST FEEDS</div>
                     {BUILTIN_FEEDS.map((feed) => (
                       <button
                         key={feed.name}
@@ -359,22 +360,22 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
                           onLocate(feed.lat, feed.lng);
                           onWatchFeed?.(feed.url, feed.name, { mode: 'iframe', embedAllowed: true });
                         }}
-                        className="w-full text-left p-2.5 rounded-lg bg-[#111111]/60 border border-[#2A2A28] hover:bg-[#1A1A1A] transition-all hover:border-[#3A3A38] group"
+                        className="w-full text-left p-2.5 rounded-lg bg-[var(--surface-1)]/60 border border-[var(--surface-3)] hover:bg-[var(--surface-1)] transition-all hover:border-[var(--surface-line)] group"
                       >
                         <div className="flex items-center gap-2">
                           <Radio className="w-3.5 h-3.5 text-[#FF4081] flex-shrink-0" />
                           <div className="min-w-0 flex-1">
-                            <div className="text-[10px] font-mono text-[#E8E6E0] truncate">{feed.name}</div>
-                            <div className="text-[8px] font-mono text-[#8A8880] uppercase">{`${feed.city}, ${feed.country} / ${feed.category}`}</div>
+                            <div className="text-[10px] font-mono text-[var(--text-primary)] truncate">{feed.name}</div>
+                            <div className="text-[8px] font-mono text-[var(--text-dim)] uppercase">{`${feed.city}, ${feed.country} / ${feed.category}`}</div>
                           </div>
-                          <PlayCircle className="w-3.5 h-3.5 text-[#8A8880] group-hover:text-[var(--cyan-primary)] flex-shrink-0" />
+                          <PlayCircle className="w-3.5 h-3.5 text-[var(--text-dim)] group-hover:text-[var(--cyan-primary)] flex-shrink-0" />
                         </div>
                       </button>
                     ))}
                   </div>
 
                   <div className="space-y-2">
-                    <div className="text-[9px] font-mono text-[#8A8880] tracking-widest">IPTV-ORG COUNTRY CHANNELS</div>
+                    <div className="text-[9px] font-mono text-[var(--text-dim)] tracking-widest">IPTV-ORG COUNTRY CHANNELS</div>
                     {iptvLoading ? (
                       <div className="text-center py-6 text-[10px] font-mono text-[var(--text-muted)]">LOADING IPTV CHANNELS...</div>
                     ) : filteredIptvChannels.length === 0 ? (
@@ -387,7 +388,7 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
                             mode: channel.streamType,
                             embedAllowed: channel.streamType !== 'external',
                           })}
-                          className="w-full text-left p-2.5 rounded-lg bg-[#111111]/60 border border-[#2A2A28] hover:bg-[#1A1A1A] transition-all hover:border-[#3A3A38] group"
+                          className="w-full text-left p-2.5 rounded-lg bg-[var(--surface-1)]/60 border border-[var(--surface-3)] hover:bg-[var(--surface-1)] transition-all hover:border-[var(--surface-line)] group"
                         >
                           <div className="flex items-center gap-2">
                             {channel.logo ? (
@@ -401,10 +402,10 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
                               </div>
                             )}
                             <div className="min-w-0 flex-1">
-                              <div className="text-[10px] font-mono text-[#E8E6E0] truncate">{channel.name}</div>
-                              <div className="text-[8px] font-mono text-[#8A8880] uppercase truncate">{`${channel.group} / ${channel.streamType}`}</div>
+                              <div className="text-[10px] font-mono text-[var(--text-primary)] truncate">{channel.name}</div>
+                              <div className="text-[8px] font-mono text-[var(--text-dim)] uppercase truncate">{`${channel.group} / ${channel.streamType}`}</div>
                             </div>
-                            <PlayCircle className="w-3.5 h-3.5 text-[#8A8880] group-hover:text-[var(--cyan-primary)] flex-shrink-0" />
+                            <PlayCircle className="w-3.5 h-3.5 text-[var(--text-dim)] group-hover:text-[var(--cyan-primary)] flex-shrink-0" />
                           </div>
                         </button>
                       ))
@@ -412,7 +413,7 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
                     <button
                       onClick={() => loadIptvChannels(iptvCountry, true)}
                       disabled={iptvRefreshing || iptvLoading}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-[#2A2A28] bg-black/30 text-[9px] font-mono tracking-widest text-[#E8E6E0] hover:border-[var(--cyan-primary)] hover:text-[var(--cyan-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-[var(--surface-3)] bg-black/30 text-[9px] font-mono tracking-widest text-[var(--text-primary)] hover:border-[var(--cyan-primary)] hover:text-[var(--cyan-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                     >
                       <RefreshCw className={`w-3 h-3 ${iptvRefreshing ? 'animate-spin' : ''}`} />
                       REFRESH SELECTED COUNTRY
@@ -436,25 +437,25 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
                               onWatchFeed(alert.feedUrl, alert.title, { mode: 'iframe', embedAllowed: true });
                             }
                           }}
-                          className="w-full text-left p-2.5 rounded-lg bg-[#111111]/60 border border-[#2A2A28] hover:bg-[#1A1A1A] transition-all hover:border-[#3A3A38] group cursor-pointer"
+                          className="w-full text-left p-2.5 rounded-lg bg-[var(--surface-1)]/60 border border-[var(--surface-3)] hover:bg-[var(--surface-1)] transition-all hover:border-[var(--surface-line)] group cursor-pointer"
                         >
                           <div className="flex items-start gap-2.5">
                             <div className="flex-shrink-0 mt-1">
-                              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: sevColor, boxShadow: `0 0 6px ${sevColor}60` }} />
+                              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: sevColor, boxShadow: `0 0 6px ${sevColor}` }} />
                             </div>
 
                             <div className="flex-1 min-w-0">
                               <div className="flex items-start gap-1.5 mb-2">
                                 <Icon className="w-3.5 h-3.5 flex-shrink-0 mt-[2px]" style={{ color: sevColor }} />
-                                <span className={`text-[10px] font-mono text-[#E8E6E0] leading-relaxed ${alert.type === 'news' ? 'line-clamp-3' : 'truncate'}`}>
+                                <span className={`text-[10px] font-mono text-[var(--text-primary)] leading-relaxed ${alert.type === 'news' ? 'line-clamp-3' : 'truncate'}`}>
                                   {decodeAlertText(alert.description || alert.title || '')}
                                 </span>
                               </div>
-                              <div className="flex items-center justify-between border-t border-[#2A2A28]/50 pt-1.5 mt-1.5">
+                              <div className="flex items-center justify-between border-t border-[var(--surface-3)]/50 pt-1.5 mt-1.5">
                                 <div className="flex items-center gap-2">
-                                  <span className="text-[9px] font-mono text-[#8A8880] uppercase tracking-wider">{alert.source}</span>
+                                  <span className="text-[9px] font-mono text-[var(--text-dim)] uppercase tracking-wider">{alert.source}</span>
                                   {alert.time && (
-                                    <span className="text-[9px] font-mono text-[#5C5A54] flex items-center gap-1 border-l border-[#2A2A28] pl-2">
+                                    <span className="text-[9px] font-mono text-[var(--text-muted)] flex items-center gap-1 border-l border-[var(--surface-3)] pl-2">
                                       <Clock className="w-2.5 h-2.5" />
                                       {new Date(alert.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                     </span>

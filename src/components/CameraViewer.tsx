@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, ExternalLink, RefreshCw, MapPin, Camera, Maximize2 } from 'lucide-react';
+import { X, ExternalLink, RefreshCw, MapPin, Camera, Maximize2, Play } from 'lucide-react';
 import Hls from 'hls.js';
 
 interface CameraViewerProps {
@@ -11,13 +11,25 @@ interface CameraViewerProps {
   onLocate?: (lat: number, lng: number) => void;
 }
 
+function isFl511Camera(camera: any): boolean {
+  if (!camera) return false;
+  if (camera.source === 'FDOT FL511') return true;
+  return String(camera.id || '').startsWith('fl511-');
+}
+
 export default function CameraViewer({ camera, onClose, onLocate }: CameraViewerProps) {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [hlsFailed, setHlsFailed] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [currentTime, setCurrentTime] = useState<string>('');
+  const [fl511ProxyUrl, setFl511ProxyUrl] = useState<string | null>(null);
+  const [fl511Resolving, setFl511Resolving] = useState(false);
+  const [fl511LiveError, setFl511LiveError] = useState(false);
+  const [fl511Retry, setFl511Retry] = useState(0);
+  const [videoNode, setVideoNode] = useState<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     const iv = setInterval(() => {
@@ -27,53 +39,65 @@ export default function CameraViewer({ camera, onClose, onLocate }: CameraViewer
     return () => clearInterval(iv);
   }, []);
 
+  // A previous camera's dead stream must not mark the next one as failed.
+  useEffect(() => {
+    setHlsFailed(false);
+    setFl511ProxyUrl(null);
+    setFl511LiveError(false);
+    setFl511Resolving(false);
+  }, [camera?.id]);
+
   const camId = camera ? `CAM-${Math.abs(camera.lat * 10000).toFixed(0).padStart(4, '0').slice(-4)}-${Math.abs(camera.lng * 10000).toFixed(0).padStart(4, '0').slice(-4)}` : 'UNKNOWN';
 
-  
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const fl511 = isFl511Camera(camera);
+  const setVideoRef = useCallback((el: HTMLVideoElement | null) => {
+    videoRef.current = el;
+    setVideoNode(el);
+  }, []);
 
-  const streamType = camera?.stream_type || 'jpg';
+  useEffect(() => {
+    if (!camera || !fl511) return;
+    let cancelled = false;
+    setFl511Resolving(true);
+    setFl511LiveError(false);
+    const params = new URLSearchParams({ id: String(camera.id) });
+    if (camera.video_url) params.set('videoUrl', String(camera.video_url));
+    if (camera.feed_url) params.set('feedUrl', String(camera.feed_url));
+    if (camera.name) params.set('name', String(camera.name));
+    fetch(`/api/cctv/fl511-live?${params.toString()}`)
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.proxy_url) throw new Error(data.error || 'FL511 live stream unavailable');
+        return data.proxy_url as string;
+      })
+      .then((url) => {
+        if (cancelled) return;
+        setFl511ProxyUrl(url);
+        setFl511Resolving(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setFl511LiveError(true);
+        setFl511Resolving(false);
+      });
+    return () => { cancelled = true; };
+  }, [camera?.id, fl511, fl511Retry]);
+
+  const resolvedStreamUrl = fl511ProxyUrl || camera?.stream_url;
+  const rawStreamType = fl511ProxyUrl ? 'hls' : (camera?.stream_type || 'jpg');
+  // A camera whose HLS died is rendered as its still image instead.
+  const streamType = hlsFailed ? 'jpg' : rawStreamType;
   const externalFeedUrl = camera?.external_url || camera?.feed_url;
-  const externalOnly = Boolean(camera?.external_url && !camera?.feed_url && !camera?.stream_url);
+  const externalOnly = Boolean(camera?.external_url && !camera?.feed_url && !camera?.stream_url && !fl511ProxyUrl);
 
   useEffect(() => {
     if (!camera) return;
-    setLoading(true);
     setError(false);
-    setImageUrl(null);
-
-    // Cleanup previous HLS instance
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
 
     if (externalOnly) {
       setLoading(false);
-      return;
-    }
-
-    if (streamType === 'hls' && camera.stream_url) {
-      if (Hls.isSupported() && videoRef.current) {
-        const hls = new Hls({ enableWorker: false });
-        hlsRef.current = hls;
-        hls.loadSource(camera.stream_url);
-        hls.attachMedia(videoRef.current);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          setLoading(false);
-          videoRef.current?.play().catch(() => {});
-        });
-        hls.on(Hls.Events.ERROR, (event, data) => {
-          if (data.fatal) setError(true);
-        });
-      } else if (videoRef.current?.canPlayType('application/vnd.apple.mpegurl')) {
-        videoRef.current.src = camera.stream_url;
-        videoRef.current.addEventListener('loadedmetadata', () => {
-          setLoading(false);
-          videoRef.current?.play().catch(() => {});
-        });
-      }
       return;
     }
 
@@ -82,22 +106,82 @@ export default function CameraViewer({ camera, onClose, onLocate }: CameraViewer
       return;
     }
 
-    // JPG fallback
     if (camera.feed_url) {
       const url = camera.feed_url.includes('?') ? `${camera.feed_url}&_t=${Date.now()}` : `${camera.feed_url}?_t=${Date.now()}`;
       setImageUrl(url);
+      // Still is the poster while FL511 HLS is minting/attaching.
+      setLoading(streamType === 'hls');
+      return;
+    }
+
+    if (streamType === 'hls' && resolvedStreamUrl) return;
+
+    setError(true);
+    setLoading(false);
+  }, [camera, refreshKey, streamType, externalOnly, resolvedStreamUrl]);
+
+  useEffect(() => {
+    if (streamType !== 'hls' || !resolvedStreamUrl || !videoNode) return;
+
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    if (Hls.isSupported()) {
+      const hls = new Hls({ enableWorker: false });
+      hlsRef.current = hls;
+      hls.loadSource(resolvedStreamUrl);
+      hls.attachMedia(videoNode);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        setLoading(false);
+        videoNode.play().catch(() => {});
+      });
+      hls.on(Hls.Events.ERROR, (_event, data) => {
+        if (!data.fatal) return;
+        hls.destroy();
+        hlsRef.current = null;
+        if (camera?.feed_url) {
+          setHlsFailed(true);
+          setLoading(false);
+        } else {
+          setError(true);
+        }
+      });
+      return () => {
+        hls.destroy();
+        if (hlsRef.current === hls) hlsRef.current = null;
+      };
+    }
+
+    if (videoNode.canPlayType('application/vnd.apple.mpegurl')) {
+      videoNode.src = resolvedStreamUrl;
+      const onLoaded = () => {
+        setLoading(false);
+        videoNode.play().catch(() => {});
+      };
+      videoNode.addEventListener('loadedmetadata', onLoaded);
+      return () => videoNode.removeEventListener('loadedmetadata', onLoaded);
+    }
+
+    if (camera?.feed_url) {
+      setHlsFailed(true);
+      setLoading(false);
     } else {
       setError(true);
-      setLoading(false);
     }
-  }, [camera, refreshKey, streamType, externalOnly]);
+  }, [streamType, resolvedStreamUrl, videoNode, camera?.feed_url]);
 
-  // Auto-refresh for JPGs
+  // Auto-refresh for JPGs.
+  // Providers publish very different cadences — FDOT snapshots only change once
+  // a minute (their own player uses data-refresh-rate="60000"), so polling every
+  // 5s was 12 identical fetches per new frame. A camera can declare its own rate.
   useEffect(() => {
     if (streamType !== 'jpg' || !camera?.feed_url) return;
-    const iv = setInterval(() => setRefreshKey(k => k + 1), 5000); // 5s refresh for JPG
+    const intervalMs = Math.max(2000, Number(camera.refresh_ms) || 5000);
+    const iv = setInterval(() => setRefreshKey(k => k + 1), intervalMs);
     return () => clearInterval(iv);
-  }, [camera?.feed_url, streamType]);
+  }, [camera?.feed_url, camera?.refresh_ms, streamType]);
 
   if (!camera) return null;
 
@@ -181,7 +265,7 @@ export default function CameraViewer({ camera, onClose, onLocate }: CameraViewer
             }} />
             <div className="absolute inset-0 pointer-events-none z-20 shadow-[inset_0_0_50px_rgba(0,0,0,0.8)]" />
 
-            {loading && !error && !externalOnly && (
+            {loading && !error && !externalOnly && !imageUrl && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-30 backdrop-blur-sm">
                 <div className="text-center">
                   <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin mx-auto mb-3" style={{ borderColor: 'var(--gold-dim)', borderTopColor: 'transparent' }} />
@@ -217,13 +301,22 @@ export default function CameraViewer({ camera, onClose, onLocate }: CameraViewer
                 </div>
               </div>
             ) : streamType === 'hls' ? (
-              <video
-                ref={videoRef}
-                className={`w-full ${fullscreen ? 'h-full object-contain' : 'h-full object-cover'}`}
-                autoPlay
-                muted
-                playsInline
-              />
+              <>
+                {imageUrl && (
+                  <img
+                    src={imageUrl}
+                    alt=""
+                    className={`absolute inset-0 w-full ${fullscreen ? 'h-full object-contain' : 'h-full object-cover'} ${loading ? 'opacity-100' : 'opacity-0'} pointer-events-none`}
+                  />
+                )}
+                <video
+                  ref={setVideoRef}
+                  className={`w-full ${fullscreen ? 'h-full object-contain' : 'h-full object-cover'} ${loading ? 'opacity-0' : 'opacity-100'}`}
+                  autoPlay
+                  muted
+                  playsInline
+                />
+              </>
             ) : streamType === 'mp4' && camera.stream_url ? (
               <video
                 src={camera.stream_url}
@@ -256,7 +349,7 @@ export default function CameraViewer({ camera, onClose, onLocate }: CameraViewer
               <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/80 border border-[var(--gold-primary)]/50 px-2 py-1 shadow-[0_0_10px_rgba(0,0,0,0.8)]">
                 <div className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_#ef4444]" />
                 <span className="text-[8px] font-mono text-white tracking-[0.2em]">
-                  {streamType === 'jpg' ? 'LIVE SAT-LINK' : 'LIVE FEED'}
+                  {streamType === 'hls' && !loading ? 'LIVE VIDEO' : streamType === 'jpg' ? (fl511Resolving ? 'STILL · STARTING VIDEO' : 'LIVE SAT-LINK') : 'LIVE FEED'}
                 </span>
               </div>
             )}
@@ -284,6 +377,17 @@ export default function CameraViewer({ camera, onClose, onLocate }: CameraViewer
                 </div>
               </div>
               <div className="flex gap-3">
+                {fl511 && !(streamType === 'hls' && !loading && !hlsFailed && !fl511LiveError) && (
+                  <button onClick={() => {
+                    setHlsFailed(false);
+                    setFl511ProxyUrl(null);
+                    setFl511Retry((n) => n + 1);
+                  }}
+                    title="Play the live FDOT stream in this viewer."
+                    className="flex items-center gap-1.5 px-2.5 py-1 bg-[var(--alert-green)]/15 hover:bg-[var(--alert-green)]/25 border border-[var(--alert-green)]/50 transition-colors text-[8px] font-mono text-[var(--alert-green)] tracking-widest font-bold">
+                    <Play className="w-2.5 h-2.5" /> SHOW VIDEO
+                  </button>
+                )}
                 {(camera.feed_url || camera.external_url || (streamType === 'iframe' && camera.stream_url)) && (
                   <a href={camera.external_url || camera.feed_url || (streamType === 'iframe' ? camera.stream_url : undefined)} target="_blank" rel="noopener noreferrer"
                     className="flex items-center gap-1.5 px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 transition-colors text-[8px] font-mono text-[var(--gold-primary)] tracking-widest">

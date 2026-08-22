@@ -26,7 +26,7 @@ Sentra Mi8 is a production-grade OSINT platform that provides situational awaren
 
 | Domain | Data Points | Sources |
 |--------|------------|---------|
-| **Aviation** | Commercial, Private, Military, Jets | adsb.lol |
+| **Aviation** | Commercial, Private, Military, Jets | OpenSky primary, adsb.lol fallback |
 | **Maritime** | 39 Global Ports, 10 Chokepoints, optional live AIS | Static Naval Intel, aisstream.io |
 | **CCTV** | 2,000+ Cameras | TfL, WSDOT, Caltrans, NYC DOT, VicRoads + more |
 | **Seismic** | Real-time M2.5+ | USGS Earthquake API |
@@ -66,7 +66,7 @@ Sentra Mi8 is a production-grade OSINT platform that provides situational awaren
 │                 crypto, sweep, threats, …)      │
 ├─────────────────────────────────────────────────┤
 │              EXTERNAL DATA SOURCES               │
-│  adsb.lol · USGS · NASA · NOAA · TfL · NVD     │
+│  OpenSky · adsb.lol · USGS · NASA · NOAA · NVD │
 │  GDACS · EONET · FIRMS · RSS Feeds · iptv-org  │
 │  blockstream.info · Blockscout · OpenSanctions  │
 │  t.me public previews                            │
@@ -224,9 +224,11 @@ IPTV_ORG_BASE_URL=
 ```
 
 Use `curl http://localhost:3005/api/provider-health` to see redacted runtime
-configuration status. OpenSky, N2YO, and keyed FIRMS variables are documented in
-`DOCKER.md` as planned/reserved adapters; the current routes do not consume
-them yet. `.env` is gitignored — only the template is committed.
+configuration status. `/api/flights` uses OpenSky OAuth credentials as the
+primary aviation source when `OPENSKY_CLIENT_ID` and `OPENSKY_CLIENT_SECRET` are
+set, and falls back to keyless `adsb.lol` when OpenSky is unavailable, empty, or
+rate-limited. N2YO and keyed FIRMS variables remain planned/reserved. `.env` is
+gitignored — only the template is committed.
 
 ---
 

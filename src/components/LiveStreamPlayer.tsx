@@ -113,7 +113,7 @@ export default function LiveStreamPlayer({ url, title, mode, externalUrl }: Live
               href={externalUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 px-5 py-2 rounded border border-[#39FF14]/40 text-[#39FF14] font-mono text-[11px] hover:bg-[#39FF14]/10 transition-colors tracking-wider"
+              className="inline-flex items-center gap-2 px-5 py-2 rounded border border-[var(--alert-green)]/40 text-[var(--alert-green)] font-mono text-[11px] hover:bg-[var(--alert-green)]/10 transition-colors tracking-wider"
             >
               <ExternalLink className="w-3.5 h-3.5" />
               OPEN STREAM
@@ -129,8 +129,8 @@ function ExternalFallback({ title, externalUrl, reason }: { title: string; exter
   return (
     <div className="w-full aspect-video flex items-center justify-center bg-black/95">
       <div className="text-center px-8">
-        <div className="w-14 h-14 rounded-full bg-[#39FF14]/10 border border-[#39FF14]/20 flex items-center justify-center mx-auto mb-4">
-          <ExternalLink className="w-6 h-6 text-[#39FF14]" />
+        <div className="w-14 h-14 rounded-full bg-[var(--alert-green)]/10 border border-[var(--alert-green)]/20 flex items-center justify-center mx-auto mb-4">
+          <ExternalLink className="w-6 h-6 text-[var(--alert-green)]" />
         </div>
         <p className="text-[13px] font-mono font-bold text-white tracking-widest mb-2">{reason}</p>
         <p className="text-[11px] font-mono text-white/50 mb-6 max-w-xs">
@@ -140,7 +140,7 @@ function ExternalFallback({ title, externalUrl, reason }: { title: string; exter
           href={externalUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 px-6 py-2.5 rounded border border-[#39FF14]/40 text-[#39FF14] font-mono text-[12px] hover:bg-[#39FF14]/10 transition-colors tracking-wider"
+          className="inline-flex items-center gap-2 px-6 py-2.5 rounded border border-[var(--alert-green)]/40 text-[var(--alert-green)] font-mono text-[12px] hover:bg-[var(--alert-green)]/10 transition-colors tracking-wider"
         >
           <ExternalLink className="w-4 h-4" />
           OPEN STREAM

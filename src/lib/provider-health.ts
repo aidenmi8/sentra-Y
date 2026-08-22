@@ -44,6 +44,8 @@ export function parseTelegramChannels(env: EnvLike = process.env): string[] {
 export function buildProviderHealth(env: EnvLike = process.env): ProviderHealthResponse {
   const geminiCount = countGeminiKeys(env);
   const telegramConfigured = hasValue(env.SENTRA_MI8_TELEGRAM_CHANNELS) || hasValue(env.OSIRIS_TELEGRAM_CHANNELS);
+  const openSkyConfigured = hasValue(env.OPENSKY_CLIENT_ID) && hasValue(env.OPENSKY_CLIENT_SECRET);
+  const openSkyPartial = hasValue(env.OPENSKY_CLIENT_ID) || hasValue(env.OPENSKY_CLIENT_SECRET);
   const providers: ProviderStatus[] = [
     {
       id: 'public-feeds',
@@ -191,11 +193,57 @@ export function buildProviderHealth(env: EnvLike = process.env): ProviderHealthR
       id: 'opensky',
       name: 'OpenSky OAuth Aviation',
       category: 'data',
-      state: 'planned',
+      state: openSkyConfigured ? 'configured' : 'missing_optional',
       required: false,
       env: ['OPENSKY_CLIENT_ID', 'OPENSKY_CLIENT_SECRET'],
       routes: ['/api/flights'],
-      message: 'Reserved for a later premium aviation adapter; current flight route uses keyless adsb.lol.',
+      message: openSkyConfigured
+        ? 'OpenSky OAuth primary aviation provider is configured; adsb.lol remains the keyless fallback.'
+        : openSkyPartial
+          ? 'OpenSky primary aviation requires both OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET; adsb.lol remains the fallback.'
+          : 'OpenSky primary aviation is not configured; /api/flights uses the keyless adsb.lol fallback.',
+    },
+    {
+      id: 'adsb-lol',
+      name: 'adsb.lol Aviation Fallback',
+      category: 'data',
+      state: 'keyless',
+      required: false,
+      env: [],
+      routes: ['/api/flights'],
+      message: 'Keyless secondary aviation fallback used when OpenSky is unavailable, empty, rate-limited, or timed out.',
+    },
+    {
+      id: 'osm-surveillance',
+      name: 'OpenStreetMap Surveillance Positions',
+      category: 'data',
+      state: 'keyless',
+      required: false,
+      env: ['OVERPASS_ENDPOINT'],
+      routes: ['/api/cameras/worldwide'],
+      message: 'Keyless worldwide camera positions via Overpass. These are mapped camera locations under ODbL, not viewable feeds; queries are viewport-bounded because a global query times out.',
+    },
+    {
+      id: 'windy-webcams',
+      name: 'Windy Webcams',
+      category: 'data',
+      state: hasValue(env.WINDY_API_KEY) ? 'configured' : 'missing_optional',
+      required: false,
+      env: ['WINDY_API_KEY'],
+      routes: ['/api/cameras/worldwide'],
+      message: hasValue(env.WINDY_API_KEY)
+        ? 'Watchable worldwide public webcams are enabled.'
+        : 'No Windy key configured; worldwide cameras fall back to OpenStreetMap positions and existing traffic-authority feeds. Get a free key at https://api.windy.com/keys.',
+    },
+    {
+      id: 'submarine-cables',
+      name: 'TeleGeography Submarine Cable Map',
+      category: 'data',
+      state: 'keyless',
+      required: false,
+      env: ['SUBMARINE_CABLE_BASE_URL'],
+      routes: ['/api/cables'],
+      message: 'Keyless open cable geometry and lifecycle data. Operational, under-construction and planned states are sourced; retired/faulted cables are not published by any open feed.',
     },
     {
       id: 'n2yo',

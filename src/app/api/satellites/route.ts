@@ -80,8 +80,9 @@ function propagateSGP4Simple(line1: string, line2: string): { lat: number; lng: 
     epochDate.setDate(epochDate.getDate() + epochDay - 1);
     const elapsedMin = (now.getTime() - epochDate.getTime()) / 60000;
 
-    // Reject stale TLEs (> 30 days old) unless it's the emergency fallback
-    if (Math.abs(elapsedMin) > 43200 && !line1.includes('27885-3')) return null;
+    // Reject stale TLEs (> 30 days old). Propagating an element set beyond that
+    // produces a position with no useful accuracy, so it must not be plotted.
+    if (Math.abs(elapsedMin) > 43200) return null;
 
     const n = meanMotion * 2 * Math.PI / 1440;
     const M = ((meanAnomDeg * Math.PI / 180) + n * elapsedMin) % (2 * Math.PI);
@@ -179,11 +180,11 @@ export async function GET() {
       }
     }
 
-    // Emergency Fallback if cache is totally empty and SatNOGS is down
+    // No hardcoded fallback element set: the previous one was a 2024-epoch ISS
+    // TLE that bypassed the staleness guard above and plotted a position roughly
+    // two years of propagation away from the real orbit.
     if (allSats.length === 0) {
-      const issFallback = "1 25544U 98067A   24146.40251785  .00015505  00000-0  27885-3 0  9997\n2 25544  51.6402 189.7042 0004381 334.8091 106.8778 15.50091157455243";
-      allSats = [{ name: 'ISS (FALLBACK)', line1: issFallback.split('\n')[0], line2: issFallback.split('\n')[1] }];
-      source = 'emergency-fallback';
+      source = 'unavailable';
     }
 
     // Sample for performance (max 2000 satellites)

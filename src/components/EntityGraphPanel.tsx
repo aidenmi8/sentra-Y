@@ -108,7 +108,7 @@ function AircraftMetric({ label, value, accent = false }: { label: string; value
   return (
     <div className="min-w-0">
       <div className="text-[8px] font-mono text-[var(--gold-primary)]/65 uppercase tracking-widest truncate">{label}</div>
-      <div className={`mt-0.5 text-[11px] font-mono truncate ${accent ? 'text-[#00E5FF]' : 'text-white/90'}`}>{value}</div>
+      <div className={`mt-0.5 text-[11px] font-mono truncate ${accent ? 'text-[var(--cyan-primary)]' : 'text-white/90'}`}>{value}</div>
     </div>
   );
 }
@@ -321,14 +321,14 @@ function EntityGraphPanel({ entity, onClose }: Props) {
     if (!s.x || !t.x) return;
     ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y);
     // Smooth, thin, non-dashed lines
-    ctx.strokeStyle = 'rgba(212,175,55,0.15)'; // faint gold
+    ctx.strokeStyle = 'rgba(var(--gold-rgb),0.15)'; // faint gold
     ctx.lineWidth = Math.max(0.5, 1 / globalScale);
     ctx.stroke();
 
     const fs = Math.max(8 / globalScale, 2);
     if (fs > 3) {
       ctx.font = `${fs}px 'JetBrains Mono', monospace`;
-      ctx.fillStyle = 'rgba(212,175,55,0.4)';
+      ctx.fillStyle = 'rgba(var(--gold-rgb),0.4)';
       ctx.textAlign = 'center'; ctx.fillText(link.label || '', (s.x + t.x) / 2, (s.y + t.y) / 2);
     }
   }, []);
@@ -356,12 +356,12 @@ function EntityGraphPanel({ entity, onClose }: Props) {
         <style>{`
           .scanline {
             position: absolute; inset: 0; pointer-events: none;
-            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(212,175,55,0.03) 50%, rgba(212,175,55,0.03));
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(var(--gold-rgb),0.03) 50%, rgba(var(--gold-rgb),0.03));
             background-size: 100% 4px;
             z-index: 10;
           }
           .hud-corner {
-            position: absolute; width: 16px; height: 16px; border-color: rgba(212,175,55,0.4); border-style: solid; z-index: 20; pointer-events: none;
+            position: absolute; width: 16px; height: 16px; border-color: rgba(var(--gold-rgb),0.4); border-style: solid; z-index: 20; pointer-events: none;
           }
           .hud-tl { top: 12px; left: 12px; border-width: 2px 0 0 2px; }
           .hud-tr { top: 12px; right: 12px; border-width: 2px 2px 0 0; }
@@ -392,8 +392,8 @@ function EntityGraphPanel({ entity, onClose }: Props) {
             <button onClick={() => setExpanded(!expanded)} className="p-1 hover:bg-[var(--gold-primary)]/20 rounded transition-colors border border-transparent hover:border-[var(--gold-primary)]/40">
               {expanded ? <Minimize2 className="w-3.5 h-3.5 text-[var(--gold-primary)]" /> : <Maximize2 className="w-3.5 h-3.5 text-[var(--gold-primary)]" />}
             </button>
-            <button onClick={onClose} className="p-1 hover:bg-[#FF1744]/20 rounded transition-colors border border-transparent hover:border-[#FF1744]/40">
-              <X className="w-3.5 h-3.5 text-[#FF1744]" />
+            <button onClick={onClose} className="p-1 hover:bg-[var(--alert-red)]/20 rounded transition-colors border border-transparent hover:border-[var(--alert-red)]/40">
+              <X className="w-3.5 h-3.5 text-[var(--alert-red)]" />
             </button>
           </div>
         </div>
@@ -414,9 +414,9 @@ function EntityGraphPanel({ entity, onClose }: Props) {
 
         {/* ERROR */}
         {error && (
-          <div className="px-6 py-2 bg-[#FF1744]/10 border-b border-[#FF1744]/30 flex items-center gap-2 relative z-20 shadow-[inset_0_0_15px_rgba(255,23,68,0.2)]">
-            <AlertTriangle className="w-3.5 h-3.5 text-[#FF1744]" />
-            <span className="text-[10px] font-mono font-bold tracking-widest text-[#FF1744] uppercase">[ ERR: {error} ]</span>
+          <div className="px-6 py-2 bg-[var(--alert-red)]/10 border-b border-[var(--alert-red)]/30 flex items-center gap-2 relative z-20 shadow-[inset_0_0_15px_rgba(255,23,68,0.2)]">
+            <AlertTriangle className="w-3.5 h-3.5 text-[var(--alert-red)]" />
+            <span className="text-[10px] font-mono font-bold tracking-widest text-[var(--alert-red)] uppercase">[ ERR: {error} ]</span>
           </div>
         )}
 
@@ -424,7 +424,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
         {aircraftSnapshot && entity?.type === 'aircraft' && (
           <div className="px-6 py-4 border-b border-[var(--border-primary)] bg-black/25 relative z-20">
             <div className="flex gap-4">
-              <div className="w-[112px] h-[78px] shrink-0 border border-[#00E5FF]/30 bg-[#00E5FF]/5 overflow-hidden flex items-center justify-center">
+              <div className="w-[112px] h-[78px] shrink-0 border border-[var(--cyan-primary)]/30 bg-[var(--cyan-primary)]/5 overflow-hidden flex items-center justify-center">
                 {aircraftPhoto?.imageUrl ? (
                   <div
                     role="img"
@@ -433,7 +433,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
                     style={{ backgroundImage: `url(${aircraftPhoto.imageUrl})` }}
                   />
                 ) : (
-                  <div className="flex flex-col items-center gap-1 text-[#00E5FF]/75">
+                  <div className="flex flex-col items-center gap-1 text-[var(--cyan-primary)]/75">
                     {aircraftPhotoLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ImageIcon className="w-5 h-5" />}
                     <Plane className="w-6 h-6" />
                   </div>
@@ -496,7 +496,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
                     href={link.url}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1 border border-[#00E5FF]/35 bg-[#00E5FF]/10 px-2 py-1 text-[9px] font-mono font-bold uppercase tracking-widest text-[#00E5FF] hover:bg-[#00E5FF]/20 transition-colors"
+                    className="inline-flex items-center gap-1 border border-[var(--cyan-primary)]/35 bg-[var(--cyan-primary)]/10 px-2 py-1 text-[9px] font-mono font-bold uppercase tracking-widest text-[var(--cyan-primary)] hover:bg-[var(--cyan-primary)]/20 transition-colors"
                   >
                     {link.label}
                     <ExternalLink className="w-3 h-3" />
@@ -526,7 +526,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
               d3AlphaDecay={0.05} d3VelocityDecay={0.4} cooldownTicks={100}
               linkDirectionalParticles={1} linkDirectionalParticleWidth={1.5}
               linkDirectionalParticleSpeed={0.003}
-              linkDirectionalParticleColor={() => 'rgba(212,175,55,0.6)'}
+              linkDirectionalParticleColor={() => 'rgba(var(--gold-rgb),0.6)'}
             />
           )}
           {graphData.nodes.length === 0 && !loading && (

@@ -224,57 +224,86 @@ export async function GET() {
     return Math.sqrt(dx * dx + dy * dy) * 111.32;
   };
 
+  // Congestion and dwell time are only meaningful with live AIS. Without it,
+  // they are reported as unknown rather than defaulted to "NORMAL / 1-2 Days",
+  // which previously read as a measurement when nothing had been measured.
+  const hasLiveVessels = ships.length > 0;
+
   const dynamicPorts = PORTS.map(port => {
     let nearbyCount = 0;
     let waitingCount = 0;
 
-    for (let i = 0; i < ships.length; i++) {
-      if (getDistanceKm(port.lat, port.lng, ships[i].lat, ships[i].lng) < 50) {
+    for (const ship of ships) {
+      if (getDistanceKm(port.lat, port.lng, ship.lat, ship.lng) < 50) {
         nearbyCount++;
-        // If speed is less than 0.5 knots, consider it anchored/waiting
-        if (ships[i].speed < 0.5 && ships[i].type !== 'military') {
-          waitingCount++;
-        }
+        // Under 0.5 knots reads as anchored/waiting. An unreported speed is not
+        // evidence of anchoring, so it is not counted either way.
+        if (typeof ship.speed === 'number' && ship.speed < 0.5 && ship.type !== 'military') waitingCount++;
       }
     }
 
-    // Heuristic: More than 40% waiting indicates congestion
-    const congestionRatio = nearbyCount > 0 ? waitingCount / nearbyCount : 0;
-    let congestionStatus = 'NORMAL';
-    let estDwellTime = '1-2 Days';
+    let congestionStatus: string | null = null;
+    let estDwellTime: string | null = null;
 
-    if (congestionRatio > 0.6 || waitingCount > 30) {
-      congestionStatus = 'SEVERE';
-      estDwellTime = '7+ Days';
-    } else if (congestionRatio > 0.4 || waitingCount > 15) {
-      congestionStatus = 'CONGESTED';
-      estDwellTime = '3-5 Days';
+    if (hasLiveVessels && nearbyCount > 0) {
+      const congestionRatio = waitingCount / nearbyCount;
+      if (congestionRatio > 0.6 || waitingCount > 30) {
+        congestionStatus = 'SEVERE';
+        estDwellTime = '7+ Days';
+      } else if (congestionRatio > 0.4 || waitingCount > 15) {
+        congestionStatus = 'CONGESTED';
+        estDwellTime = '3-5 Days';
+      } else {
+        congestionStatus = 'NORMAL';
+        estDwellTime = '1-2 Days';
+      }
     }
 
     return {
       ...port,
-      volume: `${port.volume} | LIVE: ${nearbyCount} (WAITING: ${waitingCount})`,
+      // Static reference throughput stays separate from live counts so the
+      // "LIVE" label can never end up attached to a published annual figure.
+      volume: port.volume,
+      volume_basis: 'static reference throughput',
+      live_vessels: hasLiveVessels ? nearbyCount : null,
+      waiting_vessels: hasLiveVessels ? waitingCount : null,
       congestion: congestionStatus,
-      dwell_time: estDwellTime
+      dwell_time: estDwellTime,
     };
   });
 
   const dynamicChokepoints = CHOKEPOINTS.map(choke => {
     let nearbyCount = 0;
-    for (let i = 0; i < ships.length; i++) {
-      if (getDistanceKm(choke.lat, choke.lng, ships[i].lat, ships[i].lng) < 100) nearbyCount++;
+    for (const ship of ships) {
+      if (getDistanceKm(choke.lat, choke.lng, ship.lat, ship.lng) < 100) nearbyCount++;
     }
 
-    // Dynamically adjust risk based on live ship concentration
-    let dynamicRisk = choke.risk;
-    if (nearbyCount > 50) dynamicRisk = 'CRITICAL';
-    else if (nearbyCount > 20 && dynamicRisk !== 'CRITICAL') dynamicRisk = 'HIGH';
-    else if (nearbyCount > 5 && dynamicRisk === 'LOW') dynamicRisk = 'ELEVATED';
+    // The per-chokepoint risk shipped in CHOKEPOINTS is a standing assessment,
+    // not a live reading. Only a live vessel concentration can raise it, and
+    // consumers can tell the two apart via risk_basis.
+    let risk = choke.risk;
+    let riskBasis = 'baseline standing assessment';
+
+    if (hasLiveVessels) {
+      if (nearbyCount > 50) {
+        risk = 'CRITICAL';
+        riskBasis = `live AIS concentration (${nearbyCount} vessels within 100km)`;
+      } else if (nearbyCount > 20 && risk !== 'CRITICAL') {
+        risk = 'HIGH';
+        riskBasis = `live AIS concentration (${nearbyCount} vessels within 100km)`;
+      } else if (nearbyCount > 5 && risk === 'LOW') {
+        risk = 'ELEVATED';
+        riskBasis = `live AIS concentration (${nearbyCount} vessels within 100km)`;
+      }
+    }
 
     return {
       ...choke,
-      traffic: `${choke.traffic} | LIVE SHIPS: ${nearbyCount}`,
-      risk: dynamicRisk
+      traffic: choke.traffic,
+      traffic_basis: 'static reference throughput',
+      live_vessels: hasLiveVessels ? nearbyCount : null,
+      risk,
+      risk_basis: riskBasis,
     };
   });
 

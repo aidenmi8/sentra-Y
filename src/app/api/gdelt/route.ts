@@ -20,6 +20,8 @@ export async function GET() {
 
     const allEvents: any[] = [];
     let eventId = 0;
+    // Distinguishes "GDELT answered and had nothing" from "every query failed".
+    let queriesSucceeded = 0;
 
     for (const query of queries) {
       try {
@@ -39,6 +41,7 @@ export async function GET() {
         ]).finally(() => clearTimeout(timeoutId));
 
         if (!geojson?.features) continue;
+        queriesSucceeded++;
 
         for (const feature of geojson.features) {
           const coords = feature.geometry?.coordinates;
@@ -71,42 +74,24 @@ export async function GET() {
       }
     }
 
-    // Fallback if GDELT rate-limits or fails (simulate global incidents for demo purposes)
-    if (allEvents.length === 0) {
-      const generateFallback = (type: string, name: string, count: number, latBase: number, lngBase: number, spread: number) => {
-        for(let i=0; i<count; i++) {
-          allEvents.push({
-            id: `gdelt-fb-${eventId++}`,
-            lat: latBase + (Math.random() * spread - spread/2),
-            lng: lngBase + (Math.random() * spread - spread/2),
-            name: `${name} reported in the area.`,
-            url: '',
-            html: `Local reports indicate ${name.toLowerCase()}.`,
-            type: type,
-            count: Math.floor(Math.random() * 5) + 1,
-            shareimage: ''
-          });
-        }
-      };
-
-      // Inject simulated incidents across key regions
-      generateFallback('conflict', 'Military strikes', 15, 48.5, 31.2, 5); // Ukraine
-      generateFallback('conflict', 'Armed clashes', 10, 31.5, 34.5, 2); // Gaza
-      generateFallback('conflict', 'Border shelling', 8, 33.2, 35.5, 1.5); // Lebanon
-      generateFallback('unrest', 'Civil unrest', 12, 15.0, 30.0, 10); // Sudan
-      generateFallback('conflict', 'Rebel offensive', 8, -1.0, 28.5, 5); // DRC
-      generateFallback('political', 'Emergency declared', 5, 24.0, 119.5, 2); // Taiwan
-      generateFallback('unrest', 'Widespread protests', 10, 48.8, 2.3, 3); // France
-      generateFallback('unrest', 'Violent riots', 6, 40.7, -74.0, 5); // US East
-    }
+    // An empty GDELT result means GDELT returned nothing — it is reported as
+    // such. Synthesising incidents here previously put ~74 invented events with
+    // randomised coordinates on the map, indistinguishable from real reporting.
+    const degraded = queriesSucceeded === 0;
 
     return NextResponse.json({
       events: allEvents,
       total: allEvents.length,
+      degraded,
       timestamp: new Date().toISOString(),
-      source: allEvents[0]?.id?.includes('fb') ? 'Sentra Mi8 Simulated Incident Engine' : 'GDELT 2.0 GeoJSON API',
+      source: 'GDELT 2.0 GeoJSON API',
     }, {
-      headers: { 'Cache-Control': 'public, s-maxage=300, stale-while-revalidate=600' },
+      status: degraded ? 502 : 200,
+      headers: {
+        'Cache-Control': degraded
+          ? 'no-store, max-age=0'
+          : 'public, s-maxage=300, stale-while-revalidate=600',
+      },
     });
   } catch (error) {
     console.error('[Sentra Mi8] GDELT fetch error:', error);

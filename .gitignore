@@ -27,6 +27,10 @@ yarn-error.log*
 .env*.local
 .env
 
+# Runtime provider credential overrides written by the admin surface
+/config/providers.local.json
+/config/providers.local.json.tmp
+
 # Vercel
 .vercel
 

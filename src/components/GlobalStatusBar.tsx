@@ -47,7 +47,10 @@ export default function GlobalStatusBar() {
   const cveCount = cyber?.stats?.active_cves || 0;
 
   const riskColor = (level: string) =>
-    level === 'CRITICAL' ? '#FF3D3D' : level === 'HIGH' ? '#FF9500' : level === 'ELEVATED' ? '#FFD700' : '#00E676';
+    level === 'CRITICAL' ? 'var(--severity-critical)'
+      : level === 'HIGH' ? 'var(--severity-high)'
+      : level === 'ELEVATED' ? 'var(--severity-elevated)'
+      : 'var(--severity-nominal)';
 
   const countryFlag = (code: string) => {
     try {
@@ -79,7 +82,7 @@ export default function GlobalStatusBar() {
       ))}
       <span className="text-[var(--border-primary)] mx-1">|</span>
       <span className="inline-flex items-center gap-1 mx-2">
-        <span className="text-[#E040FB]">CYBER</span>
+        <span className="text-[var(--accent-weather)]">CYBER</span>
         <span className="text-[var(--text-primary)]">{cveCount} CVEs</span>
       </span>
     </>
@@ -92,7 +95,7 @@ export default function GlobalStatusBar() {
       transition={{ delay: 4, duration: 0.8 }}
       className="hidden md:block absolute bottom-0 left-0 right-0 z-[198] pointer-events-none"
     >
-      <div className="h-[22px] overflow-hidden bg-black/90 border-t border-[var(--cyan-primary)]/40 flex items-center text-[8px] font-mono tracking-wider backdrop-blur-md relative" style={{ boxShadow: '0 -4px 20px rgba(0, 229, 255, 0.1)' }}>
+      <div className="h-[22px] overflow-hidden bg-black/90 border-t border-[var(--cyan-primary)]/40 flex items-center text-[8px] font-mono tracking-wider backdrop-blur-md relative" style={{ boxShadow: '0 -4px 20px rgba(var(--cyan-rgb), 0.1)' }}>
         {/* Animated glitch line overlay */}
         <div className="absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-[var(--cyan-primary)] to-transparent opacity-50" style={{ animation: 'hud-scanline 3s linear infinite' }} />
 

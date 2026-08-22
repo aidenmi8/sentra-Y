@@ -180,6 +180,16 @@ Generate shared secrets with `openssl rand -hex 32`. Deprecated compatibility
 aliases remain where needed: backend `OSIRIS_KEY`, `OSIRIS_INTEL_URL`, and
 `OSIRIS_TELEGRAM_CHANNELS`.
 
+### Active aviation keys
+
+OpenSky is the primary `/api/flights` provider when both OAuth client values are
+set. `adsb.lol` remains the keyless secondary fallback when OpenSky is
+unavailable, empty, timed out, or rate-limited.
+
+| Variable | Service | How to get it |
+|----------|---------|---------------|
+| `OPENSKY_CLIENT_ID` / `OPENSKY_CLIENT_SECRET` | OpenSky aviation | Create an account at <https://opensky-network.org/>, open **Account → API client**, create a client and copy id/secret. OpenSky REST uses OAuth2 client credentials; do not use username/password auth. |
+
 ### Planned / reserved keys
 
 These are documented for completeness and forward-compatibility. The current
@@ -189,7 +199,6 @@ reported as `planned` by `/api/provider-health` and are not consumed yet.
 | Variable | Service | How to get it (all free) |
 |----------|---------|--------------------------|
 | `FIRMS_API_KEY` | NASA FIRMS active fires | Enter an email at <https://firms.modaps.eosdis.nasa.gov/api/map_key/> — the `MAP_KEY` is emailed instantly. Limit 5000 req / 10 min. |
-| `OPENSKY_CLIENT_ID` / `OPENSKY_CLIENT_SECRET` | OpenSky aviation | Create an account at <https://opensky-network.org/>, open **Account → API client**, create a client and copy id/secret. **OAuth2 only since March 2025** (username/password auth removed). |
 | `N2YO_API_KEY` | N2YO satellites | Register at <https://www.n2yo.com/login/register/>, then **Profile → generate API key**. Limit 1000 req / hour; key can't be regenerated. |
 
 > Keep `.env` out of version control — it is already in `.gitignore`. Only
@@ -209,7 +218,7 @@ and `LOCAL_OSIRIS_PORT`.
 
 ### Keyless sources (no configuration needed)
 
-Aviation → `adsb.lol` · Satellites → `celestrak.org` (TLE) · Fires →
+Aviation fallback → `adsb.lol` · Satellites → `celestrak.org` (TLE) · Fires →
 NASA FIRMS open-data CSV · Earthquakes → USGS · Weather → NASA EONET · Space
 weather → NOAA SWPC · CVEs → NVD · News → public RSS / HLS streams · CCTV →
 public traffic-authority feeds · Crypto (BTC) → `blockstream.info` · Crypto

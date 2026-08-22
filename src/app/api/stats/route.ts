@@ -19,7 +19,10 @@ export async function GET(req: Request) {
 
     // Fetch all internal APIs in parallel (they have their own Cache-Control TTLs)
     const [flightsRes, satsRes, cctvRes, weatherRes, infraRes, gdeltRes] = await Promise.allSettled([
-      fetch(`${origin}/api/flights`, { next: { revalidate: 45 } }),
+      // The flights payload is several megabytes, past Next's 2MB data-cache
+      // ceiling — attempting to cache it logged an error on every request and
+      // cached nothing. The route has its own 90s module cache anyway.
+      fetch(`${origin}/api/flights`, { cache: 'no-store' }),
       fetch(`${origin}/api/satellites`, { next: { revalidate: 3600 } }),
       fetch(`${origin}/api/cctv`, { next: { revalidate: 3600 } }),
       fetch(`${origin}/api/weather`, { next: { revalidate: 300 } }),
@@ -55,7 +58,9 @@ export async function GET(req: Request) {
 
     if (weatherRes.status === 'fulfilled' && weatherRes.value.ok) {
       const data = await weatherRes.value.json();
-      weather = data.weather_events?.length || 0;
+      // /api/weather returns { events: [...] } — the weather_events key is the
+      // client-side rename and never exists on the wire.
+      weather = data.events?.length || 0;
     }
 
     if (infraRes.status === 'fulfilled' && infraRes.value.ok) {
@@ -65,7 +70,8 @@ export async function GET(req: Request) {
 
     if (gdeltRes.status === 'fulfilled' && gdeltRes.value.ok) {
         const data = await gdeltRes.value.json();
-        incidents = data.gdelt?.length || 0;
+        // /api/gdelt returns { events: [...] }, not { gdelt: [...] }.
+        incidents = data.events?.length || 0;
     }
 
     return NextResponse.json({
