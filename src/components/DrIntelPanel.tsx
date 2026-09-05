@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
-import { Newspaper, ShieldCheck, Download, RefreshCw, X, ExternalLink, Clock, AlertTriangle } from 'lucide-react';
+import { Newspaper, ShieldCheck, Download, Package, RefreshCw, X, ExternalLink, Clock, AlertTriangle } from 'lucide-react';
 
 const NEWS_ENDPOINT = '/api/dr/news';
 const CAPTURE_ENDPOINT = '/api/dr/evidence/capture';
@@ -100,9 +100,16 @@ export default function DrIntelPanel({ evidenceAvailable = false, onClose }: DrI
         </div>
         {evidenceAvailable && (
           <a href={`${EXPORT_ENDPOINT}?format=dossier`} target="_blank" rel="noopener noreferrer"
-            title="Export the tamper-evident evidence dossier"
+            title="Export the tamper-evident evidence dossier (Markdown)"
             className="p-2 rounded-xl border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--gold-primary)] transition-colors">
             <Download className="w-3.5 h-3.5" />
+          </a>
+        )}
+        {evidenceAvailable && (
+          <a href={`${EXPORT_ENDPOINT}?format=bundle`} target="_blank" rel="noopener noreferrer"
+            title="Download the self-contained evidence bundle (ZIP: blobs + public key + standalone verify.mjs)"
+            className="p-2 rounded-xl border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--gold-primary)] transition-colors">
+            <Package className="w-3.5 h-3.5" />
           </a>
         )}
         <button onClick={load} aria-label="Reload" className="p-2 rounded-xl border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--gold-primary)] transition-colors">
