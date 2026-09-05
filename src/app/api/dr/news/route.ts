@@ -10,9 +10,12 @@ registerCacheReset('dr-news', resetDrNewsCache);
 export async function GET() {
   try {
     const feed = await fetchDrNews();
+    // Don't let the CDN pin a degraded OR empty feed — both are transient states
+    // we want re-fetched, not cached at the edge for 5 minutes.
+    const cacheable = !feed.degraded && feed.items.length > 0;
     return NextResponse.json(feed, {
       headers: {
-        'Cache-Control': feed.degraded ? 'no-store' : 'public, s-maxage=300, stale-while-revalidate=600',
+        'Cache-Control': cacheable ? 'public, s-maxage=300, stale-while-revalidate=600' : 'no-store',
       },
     });
   } catch (error) {

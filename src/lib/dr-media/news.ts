@@ -29,12 +29,25 @@ export interface DrNewsSource {
   url: string;
 }
 
-/** Diario Libre front page. Additional sections/outlets arrive in Phase 2. */
+/**
+ * Distinct DR outlets, each live-probed for a reachable, parseable RSS feed.
+ * Multiple outlets give cross-source corroboration (a claim in 3 papers vs 1).
+ * Only feeds that actually responded 200 with items are listed — a dead feed is
+ * reported degraded at runtime, never added here as a silent zero. Listín Diario,
+ * Acento, El Nacional and Hoy are omitted: their RSS paths 404 or their edge
+ * blocks bots (503); revisit when a stable endpoint is found.
+ */
 export const DR_NEWS_SOURCES: DrNewsSource[] = [
   { id: 'diariolibre', name: 'Diario Libre', url: 'https://www.diariolibre.com/rss/portada.xml' },
+  { id: 'eldia', name: 'El Día', url: 'https://eldia.com.do/feed/' },
+  { id: 'ndigital', name: 'N Digital', url: 'https://n.com.do/feed/' },
 ];
 
 export const DR_NEWS_CACHE_TTL_MS = 5 * 60 * 1000;
+// A degraded or empty snapshot is still cached — but briefly — so an outage does
+// not turn every request into an un-throttled 3-way fan-out, while the honest
+// degraded signal is never pinned for the full healthy TTL.
+export const DR_NEWS_DEGRADED_TTL_MS = 60 * 1000;
 
 const DR_NEWS_HEADERS = {
   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -152,7 +165,7 @@ function hashId(s: string): string {
   return h.toString(16);
 }
 
-let cache: { items: DrNewsItem[]; expiresAt: number } | null = null;
+let cache: { feed: DrNewsFeed; expiresAt: number } | null = null;
 
 export interface DrNewsFeed {
   items: DrNewsItem[];
@@ -164,7 +177,10 @@ export interface DrNewsFeed {
 export async function fetchDrNews(options: { fetcher?: FetchLike; force?: boolean } = {}): Promise<DrNewsFeed> {
   const fetcher = options.fetcher ?? fetch;
   if (!options.force && cache && cache.expiresAt > Date.now()) {
-    return { items: cache.items, sources: [], degraded: false, timestamp: new Date().toISOString() };
+    // Replay the cached snapshot's REAL per-source health (previously this
+    // returned sources:[] / degraded:false, silently masking a down outlet for
+    // the whole TTL). Only the timestamp is refreshed.
+    return { ...cache.feed, timestamp: new Date().toISOString() };
   }
 
   const items: DrNewsItem[] = [];
@@ -194,8 +210,15 @@ export async function fetchDrNews(options: { fetcher?: FetchLike; force?: boolea
   // Newest first where we have a parsed time; undated items sink to the end.
   items.sort((a, b) => (b.published_utc || '').localeCompare(a.published_utc || ''));
 
-  if (items.length > 0) cache = { items, expiresAt: Date.now() + DR_NEWS_CACHE_TTL_MS };
-  return { items, sources, degraded: sources.some((s) => s.state === 'degraded'), timestamp: new Date().toISOString() };
+  const degraded = sources.some((s) => s.state === 'degraded');
+  const feed: DrNewsFeed = { items, sources, degraded, timestamp: new Date().toISOString() };
+  // A fully healthy, non-empty snapshot is cached for the long TTL; anything
+  // degraded OR empty (all feeds 200 but no items — a silent-failure shape) gets
+  // the short TTL so it is retried soon instead of pinned. Either way it is
+  // cached, so a burst of requests during an outage does not re-fan-out each time.
+  const stable = !degraded && items.length > 0;
+  cache = { feed, expiresAt: Date.now() + (stable ? DR_NEWS_CACHE_TTL_MS : DR_NEWS_DEGRADED_TTL_MS) };
+  return feed;
 }
 
 export function resetDrNewsCache(): void {
