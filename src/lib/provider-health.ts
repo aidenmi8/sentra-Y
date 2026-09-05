@@ -221,7 +221,7 @@ export function buildProviderHealth(env: EnvLike = process.env): ProviderHealthR
       required: false,
       env: [],
       routes: ['/api/dr/news'],
-      message: 'Keyless DR newspaper RSS (Phase 1: Diario Libre). Unparseable Spanish dates are labelled, never fabricated.',
+      message: 'Keyless DR newspaper RSS across outlets (Diario Libre, El Día, N Digital). Per-source health is reported; a down outlet is flagged degraded, never a silent zero. Unparseable Spanish dates are labelled, never fabricated.',
     },
     {
       id: 'evidence-store',

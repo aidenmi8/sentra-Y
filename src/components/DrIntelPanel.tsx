@@ -19,6 +19,14 @@ interface DrNewsItem {
   source: string;
 }
 
+interface DrSource {
+  id: string;
+  name: string;
+  state: 'ok' | 'degraded';
+  count: number;
+  status?: number;
+}
+
 interface DrIntelPanelProps {
   /** True when the evidence surface is reachable (loopback + flag). */
   evidenceAvailable?: boolean;
@@ -37,6 +45,7 @@ export default function DrIntelPanel({ evidenceAvailable = false, onClose }: DrI
   const [error, setError] = useState<string | null>(null);
   const [captured, setCaptured] = useState<Record<string, { seq: number; hash: string } | 'pending' | 'error'>>({});
   const [notice, setNotice] = useState<string | null>(null);
+  const [sources, setSources] = useState<DrSource[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -46,7 +55,7 @@ export default function DrIntelPanel({ evidenceAvailable = false, onClose }: DrI
       const body = await res.json();
       if (!res.ok) { setError(body.error || `HTTP ${res.status}`); return; }
       setItems(body.items || []);
-      if (body.degraded) setNotice('Some DR sources are degraded — see provider health.');
+      setSources(body.sources || []);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load DR news.');
     } finally {
@@ -106,6 +115,25 @@ export default function DrIntelPanel({ evidenceAvailable = false, onClose }: DrI
         )}
       </header>
 
+      {sources.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 px-4 py-2 border-b border-[var(--border-subtle)]">
+          {sources.map((s) => (
+            <span
+              key={s.id}
+              title={s.state === 'ok' ? `${s.count} articles` : `unavailable${s.status ? ` (HTTP ${s.status})` : ''}`}
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[8px] font-mono uppercase tracking-wider ${
+                s.state === 'ok'
+                  ? 'border-[var(--border-subtle)] text-[var(--text-secondary)]'
+                  : 'border-[var(--alert-red)] text-[var(--alert-red)]'
+              }`}
+            >
+              <span className={`w-1.5 h-1.5 rounded-full ${s.state === 'ok' ? 'bg-[var(--alert-green)]' : 'bg-[var(--alert-red)]'}`} />
+              {s.name}{s.state === 'ok' ? ` ${s.count}` : ' ✕'}
+            </span>
+          ))}
+        </div>
+      )}
+
       {!evidenceAvailable && (
         <div className="px-4 py-2 border-b border-[var(--border-subtle)] flex items-start gap-2 bg-[rgba(var(--alert-orange-rgb),0.08)]">
           <AlertTriangle className="w-3.5 h-3.5 text-[var(--alert-orange)] shrink-0 mt-0.5" />
@@ -120,6 +148,11 @@ export default function DrIntelPanel({ evidenceAvailable = false, onClose }: DrI
       <div className="flex-1 overflow-y-auto styled-scrollbar px-3 py-2 flex flex-col gap-2">
         {loading && items.length === 0 && (
           <p className="text-[10px] font-mono text-[var(--text-muted)] px-1 py-4 text-center tracking-widest">LOADING…</p>
+        )}
+        {!loading && items.length === 0 && (
+          <p className="text-[9px] font-mono text-[var(--alert-orange)] px-2 py-4 text-center leading-relaxed">
+            No DR articles right now — outlets reachable but empty, or degraded (see the source badges above). Try reload.
+          </p>
         )}
         {items.map((item) => {
           const cap = captured[item.id];
