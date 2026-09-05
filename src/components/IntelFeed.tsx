@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Newspaper, ChevronDown, ChevronUp, ExternalLink, MapPin, Zap } from 'lucide-react';
 
 /* ═══════════════════════════════════════════════════════════════
-   OSIRIS — Intelligence Feed
+   Sentra Mi8 — Intelligence Feed
    SIGINT-style news aggregation with risk scoring
    ═══════════════════════════════════════════════════════════════ */
 
@@ -68,7 +68,7 @@ export default function IntelFeed({ data, onLocate }: IntelFeedProps) {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-[var(--alert-green)] animate-osiris-pulse" />
+          <div className="w-1.5 h-1.5 rounded-full bg-[var(--alert-green)] animate-sentra-pulse" />
           {expanded ? <ChevronUp className="w-3 h-3 text-[var(--text-muted)]" /> : <ChevronDown className="w-3 h-3 text-[var(--text-muted)]" />}
         </div>
       </button>
@@ -128,12 +128,13 @@ export default function IntelFeed({ data, onLocate }: IntelFeedProps) {
                       {item.title}
                     </h4>
 
-                    {/* Machine Assessment (if critical) */}
-                    {item.machine_assessment && (
-                      <div className="mt-1.5 flex items-start gap-1.5 bg-red-950/20 border border-red-900/20 rounded px-2 py-1">
-                        <Zap className="w-2.5 h-2.5 text-red-400 flex-shrink-0 mt-0.5" />
-                        <span className="text-[9px] font-mono text-red-400/80 leading-relaxed">
-                          {item.machine_assessment}
+                    {/* High keyword-risk marker — states its own basis rather than
+                        claiming an analysis the pipeline never runs. */}
+                    {item.risk_score >= 8 && (
+                      <div className="mt-1.5 flex items-start gap-1.5 bg-[var(--alert-red)]/10 border border-[var(--alert-red)]/20 rounded px-2 py-1">
+                        <Zap className="w-2.5 h-2.5 text-[var(--alert-red)] flex-shrink-0 mt-0.5" />
+                        <span className="text-[9px] font-mono text-[var(--alert-red)]/80 leading-relaxed">
+                          HIGH KEYWORD RISK ({item.risk_score}/10) — {item.risk_basis || 'keyword frequency'}
                         </span>
                       </div>
                     )}

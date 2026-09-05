@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 /**
- * OSIRIS — SCM Supplier Risk Overlay
+ * Sentra Mi8 — SCM Supplier Risk Overlay
  * Calculates intersection between live global threats (Earthquakes, Fires, Conflicts)
  * and static Tier 1/2 Supplier coordinates.
  */
@@ -14,7 +14,7 @@ const SUPPLIERS = [
   { id: 'sup-sk-icheon', name: 'SK Hynix (Tier 1)', city: 'Icheon', country: 'South Korea', lat: 37.256, lng: 127.483, category: 'Semiconductor' },
   { id: 'sup-sony-kumamoto', name: 'Sony Semiconductor (Tier 2)', city: 'Kikuyo', country: 'Japan', lat: 32.883, lng: 130.825, category: 'Electronics' },
   { id: 'sup-mlcc-murata', name: 'Murata MLCC (Tier 2)', city: 'Izumo', country: 'Japan', lat: 35.361, lng: 132.756, category: 'Electronics' },
-  
+
   // Automotive & Machinery (Europe, Mexico)
   { id: 'sup-bosch-stuttgart', name: 'Bosch Auto Parts (Tier 1)', city: 'Stuttgart', country: 'Germany', lat: 48.815, lng: 9.176, category: 'Automotive' },
   { id: 'sup-zf-bavaria', name: 'ZF Friedrichshafen (Tier 1)', city: 'Friedrichshafen', country: 'Germany', lat: 47.662, lng: 9.489, category: 'Automotive' },
@@ -28,8 +28,11 @@ const SUPPLIERS = [
   { id: 'sup-panasonic-nevada', name: 'Panasonic Giga (Tier 1)', city: 'Sparks', country: 'US', lat: 39.539, lng: -119.439, category: 'Battery' },
 ];
 
-export async function GET() {
+export async function GET(req: Request) {
   const dynamicSuppliers = [...SUPPLIERS].map(s => ({ ...s, risk_level: 'NORMAL', active_threats: [] as string[] }));
+  // Each overlay is tracked separately so a partial failure is reported rather
+  // than leaving suppliers looking clear when a risk source never ran.
+  const overlays: Record<string, 'ok' | 'failed'> = {};
 
   // Fast distance approximation (km)
   const getDistanceKm = (lat1: number, lng1: number, lat2: number, lng2: number) => {
@@ -38,61 +41,72 @@ export async function GET() {
     return Math.sqrt(dx * dx + dy * dy) * 111.32;
   };
 
+  // 1. Seismic proximity (USGS)
   try {
-    // 1. Fetch Earthquakes
     const eqRes = await fetch('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson', { signal: AbortSignal.timeout(5000) });
-    if (eqRes.ok) {
-      const eqData = await eqRes.json();
-      const earthquakes = eqData.features || [];
-      dynamicSuppliers.forEach(sup => {
-        const nearbyEq = earthquakes.filter((eq: any) => {
-          const [lng, lat] = eq.geometry.coordinates;
-          return getDistanceKm(sup.lat, sup.lng, lat, lng) < 150; // 150km impact zone
-        });
-        if (nearbyEq.length > 0) {
-          sup.risk_level = 'CRITICAL';
-          sup.active_threats.push(`SEISMIC SHOCK (M${Math.max(...nearbyEq.map((eq: any) => eq.properties.mag)).toFixed(1)})`);
-        }
+    if (!eqRes.ok) throw new Error(`USGS HTTP ${eqRes.status}`);
+    const eqData = await eqRes.json();
+    const earthquakes = eqData.features || [];
+    dynamicSuppliers.forEach(sup => {
+      const nearbyEq = earthquakes.filter((eq: any) => {
+        const [lng, lat] = eq.geometry.coordinates;
+        return getDistanceKm(sup.lat, sup.lng, lat, lng) < 150; // 150km impact zone
       });
-    }
-
-    // 2. Fetch Active Fires (NASA FIRMS mock proxy from local or direct)
-    // For performance, we'll fetch from the local fires endpoint since it already aggregates FIRMS
-    const fireRes = await fetch('http://127.0.0.1:3000/api/fires', { signal: AbortSignal.timeout(5000) });
-    if (fireRes.ok) {
-      const fireData = await fireRes.json();
-      const fires = fireData.data || [];
-      dynamicSuppliers.forEach(sup => {
-        const nearbyFires = fires.filter((f: any) => getDistanceKm(sup.lat, sup.lng, f.lat, f.lng) < 50); // 50km fire zone
-        if (nearbyFires.length > 0) {
-          if (sup.risk_level === 'NORMAL') sup.risk_level = 'HIGH';
-          sup.active_threats.push(`WILDFIRE PROXIMITY (${nearbyFires.length} hotspots)`);
-        }
-      });
-    }
-
-    // 3. Fetch Conflict Zones (GDELT)
-    const gdeltRes = await fetch('http://127.0.0.1:3000/api/gdelt', { signal: AbortSignal.timeout(5000) });
-    if (gdeltRes.ok) {
-      const gdeltData = await gdeltRes.json();
-      const conflicts = gdeltData.events || [];
-      dynamicSuppliers.forEach(sup => {
-        const nearbyConflicts = conflicts.filter((c: any) => getDistanceKm(sup.lat, sup.lng, c.lat, c.lng) < 100);
-        if (nearbyConflicts.length > 0) {
-          sup.risk_level = 'CRITICAL';
-          sup.active_threats.push(`ARMED CONFLICT / RIOT`);
-        }
-      });
-    }
-
+      if (nearbyEq.length > 0) {
+        sup.risk_level = 'CRITICAL';
+        sup.active_threats.push(`SEISMIC SHOCK (M${Math.max(...nearbyEq.map((eq: any) => eq.properties.mag)).toFixed(1)})`);
+      }
+    });
+    overlays.seismic = 'ok';
   } catch (e) {
-    console.error("SCM Risk overlay error:", e);
+    overlays.seismic = 'failed';
+    console.error('SCM seismic overlay error:', e);
+  }
+
+  // 2. Wildfire proximity — via the local fires aggregator, which returns { fires: [...] }
+  try {
+    const fireRes = await fetch(new URL('/api/fires', req.url), { signal: AbortSignal.timeout(5000) });
+    if (!fireRes.ok) throw new Error(`fires HTTP ${fireRes.status}`);
+    const fireData = await fireRes.json();
+    const fires = fireData.fires || [];
+    dynamicSuppliers.forEach(sup => {
+      const nearbyFires = fires.filter((f: any) => getDistanceKm(sup.lat, sup.lng, f.lat, f.lng) < 50); // 50km fire zone
+      if (nearbyFires.length > 0) {
+        if (sup.risk_level === 'NORMAL') sup.risk_level = 'HIGH';
+        sup.active_threats.push(`WILDFIRE PROXIMITY (${nearbyFires.length} hotspots)`);
+      }
+    });
+    overlays.wildfire = 'ok';
+  } catch (e) {
+    overlays.wildfire = 'failed';
+    console.error('SCM wildfire overlay error:', e);
+  }
+
+  // 3. Conflict proximity (GDELT)
+  try {
+    const gdeltRes = await fetch(new URL('/api/gdelt', req.url), { signal: AbortSignal.timeout(5000) });
+    if (!gdeltRes.ok) throw new Error(`gdelt HTTP ${gdeltRes.status}`);
+    const gdeltData = await gdeltRes.json();
+    const conflicts = gdeltData.events || [];
+    dynamicSuppliers.forEach(sup => {
+      const nearbyConflicts = conflicts.filter((c: any) => getDistanceKm(sup.lat, sup.lng, c.lat, c.lng) < 100);
+      if (nearbyConflicts.length > 0) {
+        sup.risk_level = 'CRITICAL';
+        sup.active_threats.push('ARMED CONFLICT / RIOT');
+      }
+    });
+    overlays.conflict = 'ok';
+  } catch (e) {
+    overlays.conflict = 'failed';
+    console.error('SCM conflict overlay error:', e);
   }
 
   return NextResponse.json({
     suppliers: dynamicSuppliers,
     total: dynamicSuppliers.length,
     critical_count: dynamicSuppliers.filter(s => s.risk_level === 'CRITICAL').length,
+    overlays,
+    degraded: Object.values(overlays).some(state => state === 'failed'),
     timestamp: new Date().toISOString(),
   }, {
     headers: { 'Cache-Control': 'no-store' },

@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     const response = await fetch(targetUrl.toString(), {
       headers: {
         'Accept': '*/*',
-        'User-Agent': 'Osiris-Tile-Proxy/1.0',
+        'User-Agent': 'SentraMi8-Tile-Proxy/1.0',
       },
       // Using Next.js fetch cache options to heavily cache tiles locally
       next: {
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     }
 
     const data = await response.arrayBuffer();
-    
+
     // Forward the content-type from the upstream response
     const contentType = response.headers.get('content-type') || 'application/octet-stream';
 

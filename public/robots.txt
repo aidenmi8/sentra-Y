@@ -1,5 +1,5 @@
-# Osiris Global Intelligence Platform
-# https://osirisai.live
+# Sentra Mi8 Global Intelligence Platform
+# Local default: http://localhost:3005
 
 User-agent: *
 Allow: /
@@ -11,7 +11,7 @@ Disallow: /api/osint/*
 Allow: /api/health
 
 # Sitemap
-Sitemap: https://osirisai.live/sitemap.xml
+Sitemap: http://localhost:3005/sitemap.xml
 
 # Crawl-delay for respectful indexing
 Crawl-delay: 10

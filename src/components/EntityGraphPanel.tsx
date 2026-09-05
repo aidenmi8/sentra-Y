@@ -6,8 +6,23 @@ import dynamic from 'next/dynamic';
 import {
   X, Maximize2, Minimize2, Loader2, AlertTriangle,
   Plane, Ship, Building2, User, Globe, Newspaper, ShieldAlert,
-  RefreshCw, Network, Wifi
+  RefreshCw, Network, Wifi, ExternalLink, Image as ImageIcon
 } from 'lucide-react';
+import {
+  buildAircraftSnapshot,
+  buildAircraftSourceLinks,
+  overlayAircraftLookup,
+  type AircraftSnapshot,
+  type AircraftTarget,
+} from '@/lib/aircraft-intel';
+import type { AircraftPhotoResult } from '@/lib/aircraft-photo';
+import {
+  buildVesselSnapshot,
+  buildVesselSourceLinks,
+  type VesselSnapshot,
+  type VesselTarget,
+} from '@/lib/vessel-intel';
+import type { VesselPhotoResult } from '@/lib/vessel-photo';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -50,6 +65,73 @@ interface Props {
   onClose: () => void;
 }
 
+const AIRCRAFT_REFRESH_MS = 45_000;
+const VESSEL_REFRESH_MS = 10_000;
+
+function displayText(value: string | number | boolean | null | undefined, fallback = '--'): string {
+  if (value === null || value === undefined || value === '') return fallback;
+  if (typeof value === 'boolean') return value ? 'YES' : 'NO';
+  return String(value);
+}
+
+function formatAltitude(value: number | null): string {
+  return typeof value === 'number' ? `${Math.round(value).toLocaleString()} M` : '--';
+}
+
+function formatSpeed(value: number | null): string {
+  return typeof value === 'number' ? `${Math.round(value).toLocaleString()} KT` : '--';
+}
+
+function formatHeading(value: number | null): string {
+  return typeof value === 'number' ? `${Math.round(value)} DEG` : '--';
+}
+
+function formatCoordinates(snapshot: { lat: number | null; lng: number | null }): string {
+  if (typeof snapshot.lat !== 'number' || typeof snapshot.lng !== 'number') return '--';
+  return `${snapshot.lat.toFixed(4)}, ${snapshot.lng.toFixed(4)}`;
+}
+
+function formatFeedAge(timestamp: string): string {
+  const parsed = Date.parse(timestamp);
+  if (!Number.isFinite(parsed)) return 'UNKNOWN';
+  const seconds = Math.max(0, Math.floor((Date.now() - parsed) / 1000));
+  if (seconds < 90) return `${seconds}S AGO`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 90) return `${minutes}M AGO`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}H AGO`;
+}
+
+function aircraftTargetFromEntity(entity: NonNullable<Props['entity']>): AircraftTarget {
+  const p = entity.properties || {};
+  return {
+    ...p,
+    callsign: p.callsign || entity.label || entity.id,
+    registration: p.registration,
+    icao24: p.icao24 || entity.id,
+    model: p.model,
+  };
+}
+
+function vesselTargetFromEntity(entity: NonNullable<Props['entity']>): VesselTarget {
+  const p = entity.properties || {};
+  return {
+    ...p,
+    mmsi: p.mmsi || entity.id,
+    imo: p.imo,
+    name: p.name || entity.label,
+  };
+}
+
+function AircraftMetric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[8px] font-mono text-[var(--gold-primary)]/65 uppercase tracking-widest truncate">{label}</div>
+      <div className={`mt-0.5 text-[11px] font-mono truncate ${accent ? 'text-[var(--cyan-primary)]' : 'text-white/90'}`}>{value}</div>
+    </div>
+  );
+}
+
 function EntityGraphPanel({ entity, onClose }: Props) {
   const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] });
   const [loading, setLoading] = useState(false);
@@ -57,6 +139,13 @@ function EntityGraphPanel({ entity, onClose }: Props) {
   const [selectedNode, setSelectedNode] = useState<EntityNode | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [aircraftSnapshot, setAircraftSnapshot] = useState<AircraftSnapshot | null>(null);
+  const [aircraftRefreshError, setAircraftRefreshError] = useState<string | null>(null);
+  const [aircraftPhoto, setAircraftPhoto] = useState<AircraftPhotoResult | null>(null);
+  const [aircraftPhotoLoading, setAircraftPhotoLoading] = useState(false);
+  const [vesselSnapshot, setVesselSnapshot] = useState<VesselSnapshot | null>(null);
+  const [vesselPhoto, setVesselPhoto] = useState<VesselPhotoResult | null>(null);
+  const [vesselPhotoLoading, setVesselPhotoLoading] = useState(false);
   const graphRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -111,6 +200,170 @@ function EntityGraphPanel({ entity, onClose }: Props) {
     expandEntity(entity.type, entity.id, entity.properties);
   }, [entity]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    if (!entity || entity.type !== 'aircraft') {
+      queueMicrotask(() => {
+        setAircraftSnapshot(null);
+        setAircraftRefreshError(null);
+        setAircraftPhoto(null);
+      });
+      return;
+    }
+
+    let cancelled = false;
+    const target = aircraftTargetFromEntity(entity);
+    queueMicrotask(() => {
+      if (!cancelled) {
+        setAircraftSnapshot(buildAircraftSnapshot(target, null, null));
+        setAircraftRefreshError(null);
+      }
+    });
+
+    const refreshAircraft = async () => {
+      try {
+        const icao = String(target.icao24 || '').trim();
+        const [feedRes, lookupRes] = await Promise.all([
+          fetch('/api/flights', { cache: 'no-store' }),
+          icao
+            ? fetch(`/api/aircraft/lookup?icao24=${encodeURIComponent(icao)}`, { cache: 'no-store' })
+            : Promise.resolve(null),
+        ]);
+        if (!feedRes.ok) throw new Error(`HTTP ${feedRes.status}`);
+        const feed = await feedRes.json();
+        const lookup = lookupRes && lookupRes.ok ? await lookupRes.json() : null;
+        if (cancelled) return;
+        setAircraftSnapshot((prev) => {
+          const next = buildAircraftSnapshot(target, feed, prev);
+          if (!lookup?.found) return next;
+          return overlayAircraftLookup(next, {
+            callsign: lookup.callsign,
+            registration: lookup.registration,
+            model: lookup.model,
+            squawk: lookup.squawk,
+            nac_p: lookup.nac_p,
+            icao24: lookup.icao24,
+          });
+        });
+        setAircraftRefreshError(null);
+      } catch (e) {
+        if (cancelled) return;
+        setAircraftSnapshot(prev => buildAircraftSnapshot(target, null, prev));
+        setAircraftRefreshError(e instanceof Error ? e.message : 'Refresh failed');
+      }
+    };
+
+    refreshAircraft();
+    const intervalId = window.setInterval(refreshAircraft, AIRCRAFT_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [entity]);
+
+  useEffect(() => {
+    if (!aircraftSnapshot) {
+      queueMicrotask(() => setAircraftPhoto(null));
+      return;
+    }
+
+    const params = new URLSearchParams();
+    if (aircraftSnapshot.registration) params.set('registration', aircraftSnapshot.registration);
+    if (aircraftSnapshot.model) params.set('model', aircraftSnapshot.model);
+    if (aircraftSnapshot.icao24) params.set('icao24', aircraftSnapshot.icao24);
+    if (aircraftSnapshot.callsign) params.set('callsign', aircraftSnapshot.callsign);
+    if (!params.toString()) {
+      queueMicrotask(() => setAircraftPhoto(null));
+      return;
+    }
+
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setAircraftPhotoLoading(true);
+    });
+    fetch(`/api/aircraft/photo?${params}`, { cache: 'force-cache' })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (!cancelled) setAircraftPhoto(data);
+      })
+      .catch(() => {
+        if (!cancelled) setAircraftPhoto(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAircraftPhotoLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    aircraftSnapshot?.icao24,
+    aircraftSnapshot?.registration,
+    aircraftSnapshot?.model,
+    aircraftSnapshot?.callsign,
+  ]);
+
+  useEffect(() => {
+    if (!entity || entity.type !== 'vessel') {
+      queueMicrotask(() => {
+        setVesselSnapshot(null);
+        setVesselPhoto(null);
+      });
+      return;
+    }
+
+    let cancelled = false;
+    const target = vesselTargetFromEntity(entity);
+    queueMicrotask(() => {
+      if (!cancelled) setVesselSnapshot(buildVesselSnapshot(target));
+    });
+
+    const refreshVessel = async () => {
+      try {
+        const mmsi = String(target.mmsi || '').trim();
+        const url = mmsi ? `/api/maritime?mmsi=${encodeURIComponent(mmsi)}` : '/api/maritime';
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (cancelled) return;
+        const ships = data.ship ? [data.ship] : (data.ships || []);
+        setVesselSnapshot(buildVesselSnapshot(target, ships));
+      } catch {
+        if (!cancelled) setVesselSnapshot(buildVesselSnapshot(target));
+      }
+    };
+
+    refreshVessel();
+    const intervalId = window.setInterval(refreshVessel, VESSEL_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [entity]);
+
+  useEffect(() => {
+    if (!vesselSnapshot) {
+      queueMicrotask(() => setVesselPhoto(null));
+      return;
+    }
+    const params = new URLSearchParams();
+    if (vesselSnapshot.name) params.set('name', vesselSnapshot.name);
+    if (vesselSnapshot.imo) params.set('imo', vesselSnapshot.imo);
+    if (vesselSnapshot.mmsi) params.set('mmsi', vesselSnapshot.mmsi);
+    if (vesselSnapshot.type) params.set('type', vesselSnapshot.type);
+    if (!params.toString()) {
+      queueMicrotask(() => setVesselPhoto(null));
+      return;
+    }
+    let cancelled = false;
+    queueMicrotask(() => { if (!cancelled) setVesselPhotoLoading(true); });
+    fetch(`/api/vessel/photo?${params}`, { cache: 'force-cache' })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => { if (!cancelled) setVesselPhoto(data); })
+      .catch(() => { if (!cancelled) setVesselPhoto(null); })
+      .finally(() => { if (!cancelled) setVesselPhotoLoading(false); });
+    return () => { cancelled = true; };
+  }, [vesselSnapshot?.name, vesselSnapshot?.imo, vesselSnapshot?.mmsi, vesselSnapshot?.type]);
+
   const handleNodeClick = useCallback((node: any) => {
     const n = node as EntityNode;
     setSelectedNode(n);
@@ -123,7 +376,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
     const isSelected = n === selectedNode;
     const color = TYPE_COLORS[n.type] || '#888';
     const size = isSelected ? 5 : 3.5;
-    
+
     // Clean, precise circle
     ctx.beginPath();
     ctx.arc(n.x!, n.y!, size, 0, 2 * Math.PI);
@@ -149,7 +402,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
       // BR
       ctx.moveTo(n.x! + bSize - bLen, n.y! + bSize); ctx.lineTo(n.x! + bSize, n.y! + bSize); ctx.lineTo(n.x! + bSize, n.y! + bSize - bLen);
       ctx.stroke();
-      
+
       // Faint outer ring
       ctx.beginPath(); ctx.arc(n.x!, n.y!, bSize + 2, 0, 2*Math.PI);
       ctx.strokeStyle = `${color}30`; ctx.lineWidth = 1; ctx.stroke();
@@ -176,19 +429,25 @@ function EntityGraphPanel({ entity, onClose }: Props) {
     if (!s.x || !t.x) return;
     ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(t.x, t.y);
     // Smooth, thin, non-dashed lines
-    ctx.strokeStyle = 'rgba(212,175,55,0.15)'; // faint gold
-    ctx.lineWidth = Math.max(0.5, 1 / globalScale); 
+    ctx.strokeStyle = 'rgba(var(--gold-rgb),0.15)'; // faint gold
+    ctx.lineWidth = Math.max(0.5, 1 / globalScale);
     ctx.stroke();
-    
+
     const fs = Math.max(8 / globalScale, 2);
     if (fs > 3) {
-      ctx.font = `${fs}px 'JetBrains Mono', monospace`; 
-      ctx.fillStyle = 'rgba(212,175,55,0.4)';
+      ctx.font = `${fs}px 'JetBrains Mono', monospace`;
+      ctx.fillStyle = 'rgba(var(--gold-rgb),0.4)';
       ctx.textAlign = 'center'; ctx.fillText(link.label || '', (s.x + t.x) / 2, (s.y + t.y) / 2);
     }
   }, []);
 
   // Removed early return to allow rendering empty panel
+  const aircraftLinks = aircraftSnapshot ? buildAircraftSourceLinks(aircraftSnapshot) : [];
+  const aircraftStatus = aircraftSnapshot?.stale ? '[ OFF-FEED ]' : '[ LIVE ADS-B ]';
+  const aircraftStatusColor = aircraftSnapshot?.stale ? '#FFB000' : '#00E5FF';
+  const vesselLinks = vesselSnapshot ? buildVesselSourceLinks(vesselSnapshot) : [];
+  const vesselStatus = vesselSnapshot?.stale ? '[ OFF-FEED ]' : '[ LIVE AIS ]';
+  const vesselStatusColor = vesselSnapshot?.stale ? '#FFB000' : '#26C6DA';
 
   return (
     <AnimatePresence>
@@ -208,18 +467,18 @@ function EntityGraphPanel({ entity, onClose }: Props) {
         <style>{`
           .scanline {
             position: absolute; inset: 0; pointer-events: none;
-            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(212,175,55,0.03) 50%, rgba(212,175,55,0.03));
+            background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(var(--gold-rgb),0.03) 50%, rgba(var(--gold-rgb),0.03));
             background-size: 100% 4px;
             z-index: 10;
           }
           .hud-corner {
-            position: absolute; width: 16px; height: 16px; border-color: rgba(212,175,55,0.4); border-style: solid; z-index: 20; pointer-events: none;
+            position: absolute; width: 16px; height: 16px; border-color: rgba(var(--gold-rgb),0.4); border-style: solid; z-index: 20; pointer-events: none;
           }
           .hud-tl { top: 12px; left: 12px; border-width: 2px 0 0 2px; }
           .hud-tr { top: 12px; right: 12px; border-width: 2px 2px 0 0; }
           .hud-bl { bottom: 12px; left: 12px; border-width: 0 0 2px 2px; }
           .hud-br { bottom: 12px; right: 12px; border-width: 0 2px 2px 0; }
-          
+
           .typewriter {
             display: inline-block; overflow: hidden; white-space: nowrap; border-right: 2px solid var(--gold-primary);
             animation: typing 0.8s steps(30, end) forwards, blink-caret 0.5s step-end infinite;
@@ -227,7 +486,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
           @keyframes typing { from { width: 0 } to { width: 100% } }
           @keyframes blink-caret { from, to { border-color: transparent } 50% { border-color: var(--gold-primary) } }
         `}</style>
-        
+
         <div className="scanline" />
         <div className="hud-corner hud-tl" />
         <div className="hud-corner hud-tr" />
@@ -236,16 +495,16 @@ function EntityGraphPanel({ entity, onClose }: Props) {
         {/* HEADER */}
         <div className="flex items-center justify-between px-6 py-3 border-b border-[var(--border-primary)] bg-[var(--gold-primary)]/5 relative z-20">
           <div className="flex items-center gap-3">
-            <div className="w-1.5 h-1.5 bg-[var(--gold-primary)] animate-osiris-pulse shadow-[0_0_8px_var(--gold-primary)]" />
-            <span className="text-[12px] font-mono font-bold tracking-[0.2em] text-[var(--gold-primary)]">[ OSIRIS // ENTITY INTEL ]</span>
+            <div className="w-1.5 h-1.5 bg-[var(--gold-primary)] animate-sentra-pulse shadow-[0_0_8px_var(--gold-primary)]" />
+            <span className="text-[12px] font-mono font-bold tracking-[0.2em] text-[var(--gold-primary)]">[ SENTRA MI8 // ENTITY INTEL ]</span>
             {loading && <Loader2 className="w-3.5 h-3.5 text-[var(--gold-primary)] animate-spin" />}
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => setExpanded(!expanded)} className="p-1 hover:bg-[var(--gold-primary)]/20 rounded transition-colors border border-transparent hover:border-[var(--gold-primary)]/40">
               {expanded ? <Minimize2 className="w-3.5 h-3.5 text-[var(--gold-primary)]" /> : <Maximize2 className="w-3.5 h-3.5 text-[var(--gold-primary)]" />}
             </button>
-            <button onClick={onClose} className="p-1 hover:bg-[#FF1744]/20 rounded transition-colors border border-transparent hover:border-[#FF1744]/40">
-              <X className="w-3.5 h-3.5 text-[#FF1744]" />
+            <button onClick={onClose} className="p-1 hover:bg-[var(--alert-red)]/20 rounded transition-colors border border-transparent hover:border-[var(--alert-red)]/40">
+              <X className="w-3.5 h-3.5 text-[var(--alert-red)]" />
             </button>
           </div>
         </div>
@@ -259,16 +518,192 @@ function EntityGraphPanel({ entity, onClose }: Props) {
           </div>
         ) : (
           <div className="px-6 py-3 border-b border-[var(--border-primary)] flex items-center gap-3 bg-black/20 relative z-20">
-            <Network className="w-4 h-4 text-[var(--gold-primary)]/50 animate-osiris-pulse" />
+            <Network className="w-4 h-4 text-[var(--gold-primary)]/50 animate-sentra-pulse" />
             <span className="text-xs font-mono text-[var(--gold-primary)]/50 tracking-widest uppercase truncate typewriter">[ AWAITING TARGET LOCK ]</span>
           </div>
         )}
 
         {/* ERROR */}
         {error && (
-          <div className="px-6 py-2 bg-[#FF1744]/10 border-b border-[#FF1744]/30 flex items-center gap-2 relative z-20 shadow-[inset_0_0_15px_rgba(255,23,68,0.2)]">
-            <AlertTriangle className="w-3.5 h-3.5 text-[#FF1744]" />
-            <span className="text-[10px] font-mono font-bold tracking-widest text-[#FF1744] uppercase">[ ERR: {error} ]</span>
+          <div className="px-6 py-2 bg-[var(--alert-red)]/10 border-b border-[var(--alert-red)]/30 flex items-center gap-2 relative z-20 shadow-[inset_0_0_15px_rgba(255,23,68,0.2)]">
+            <AlertTriangle className="w-3.5 h-3.5 text-[var(--alert-red)]" />
+            <span className="text-[10px] font-mono font-bold tracking-widest text-[var(--alert-red)] uppercase">[ ERR: {error} ]</span>
+          </div>
+        )}
+
+        {/* AIRCRAFT LIVE TRACK */}
+        {aircraftSnapshot && entity?.type === 'aircraft' && (
+          <div className="px-6 py-4 border-b border-[var(--border-primary)] bg-black/25 relative z-20">
+            <div className="flex gap-4">
+              <div className="w-[112px] h-[78px] shrink-0 border border-[var(--cyan-primary)]/30 bg-[var(--cyan-primary)]/5 overflow-hidden flex items-center justify-center">
+                {aircraftPhoto?.imageUrl ? (
+                  <img
+                    src={aircraftPhoto.imageUrl}
+                    alt={`${aircraftSnapshot.registration || aircraftSnapshot.callsign || aircraftSnapshot.model || 'Aircraft'} photo`}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-1 text-[var(--cyan-primary)]/75">
+                    {aircraftPhotoLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ImageIcon className="w-5 h-5" />}
+                    <Plane className="w-6 h-6" />
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-mono font-bold text-white tracking-[0.14em] uppercase truncate">
+                      {displayText(aircraftSnapshot.callsign || aircraftSnapshot.registration || aircraftSnapshot.icao24)}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[9px] font-mono tracking-widest uppercase">
+                      <span className="text-[var(--gold-primary)]/75">REG {displayText(aircraftSnapshot.registration)}</span>
+                      <span className="text-white/45">ICAO {displayText(aircraftSnapshot.icao24)}</span>
+                    </div>
+                  </div>
+                  <span
+                    className="shrink-0 text-[9px] font-mono font-bold tracking-widest border px-2 py-1"
+                    style={{ color: aircraftStatusColor, borderColor: `${aircraftStatusColor}80`, background: `${aircraftStatusColor}12` }}
+                  >
+                    {aircraftStatus}
+                  </span>
+                </div>
+
+                <div className="mt-3 grid grid-cols-3 gap-x-4 gap-y-2">
+                  <AircraftMetric label="model" value={displayText(aircraftSnapshot.model)} />
+                  <AircraftMetric label="altitude" value={formatAltitude(aircraftSnapshot.altitude)} accent />
+                  <AircraftMetric label="speed" value={formatSpeed(aircraftSnapshot.speedKnots)} />
+                  <AircraftMetric label="heading" value={formatHeading(aircraftSnapshot.heading)} />
+                  <AircraftMetric label="squawk" value={displayText(aircraftSnapshot.squawk)} />
+                  <AircraftMetric label="coords" value={formatCoordinates(aircraftSnapshot)} />
+                  <AircraftMetric label="category" value={displayText(aircraftSnapshot.category || aircraftSnapshot.aircraftCategory)} />
+                  <AircraftMetric label="grounded" value={displayText(aircraftSnapshot.grounded)} />
+                  <AircraftMetric label="nacp" value={displayText(aircraftSnapshot.nacP)} />
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-[9px] font-mono text-white/45 tracking-widest uppercase">
+                LAST SEEN {formatFeedAge(aircraftSnapshot.feedTimestamp)}
+                {aircraftSnapshot.stale && aircraftSnapshot.offFeedSince ? ` // OFF FEED ${formatFeedAge(aircraftSnapshot.offFeedSince)}` : ''}
+              </span>
+              <span className="text-[9px] font-mono text-[var(--gold-primary)]/65 tracking-widest uppercase ml-auto">
+                {aircraftSnapshot.source}
+              </span>
+            </div>
+
+            {aircraftRefreshError && (
+              <div className="mt-2 text-[9px] font-mono text-[#FFB000] tracking-widest uppercase">
+                REFRESH HOLD: {aircraftRefreshError}
+              </div>
+            )}
+
+            {aircraftLinks.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {aircraftLinks.map(link => (
+                  <a
+                    key={link.id}
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 border border-[var(--cyan-primary)]/35 bg-[var(--cyan-primary)]/10 px-2 py-1 text-[9px] font-mono font-bold uppercase tracking-widest text-[var(--cyan-primary)] hover:bg-[var(--cyan-primary)]/20 transition-colors"
+                  >
+                    {link.label}
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                ))}
+              </div>
+            )}
+
+            {aircraftPhoto?.sourceUrl && (
+              <div className="mt-2 text-[8px] font-mono text-white/35 truncate">
+                IMAGE: <a href={aircraftPhoto.sourceUrl} target="_blank" rel="noreferrer" className="text-white/50 hover:text-white">{aircraftPhoto.sourceName || 'Photo'}</a>
+                {aircraftPhoto.attribution ? ` // ${aircraftPhoto.attribution}` : aircraftPhoto.license ? ` // ${aircraftPhoto.license}` : ''}
+              </div>
+            )}
+          </div>
+        )}
+
+        {vesselSnapshot && entity?.type === 'vessel' && (
+          <div className="px-6 py-4 border-b border-[var(--border-primary)] bg-black/25 relative z-20">
+            <div className="flex gap-4">
+              <div className="w-[112px] h-[78px] shrink-0 border border-[#26C6DA]/30 bg-[#26C6DA]/5 overflow-hidden flex items-center justify-center">
+                {vesselPhoto?.imageUrl ? (
+                  <img
+                    src={vesselPhoto.imageUrl}
+                    alt={`${vesselSnapshot.name || vesselSnapshot.mmsi || 'Vessel'} photo`}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-1 text-[#26C6DA]/75">
+                    {vesselPhotoLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ImageIcon className="w-5 h-5" />}
+                    <Ship className="w-6 h-6" />
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-mono font-bold text-white tracking-[0.14em] uppercase truncate">
+                      {displayText(vesselSnapshot.name || vesselSnapshot.mmsi)}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[9px] font-mono tracking-widest uppercase">
+                      <span className="text-[var(--gold-primary)]/75">MMSI {displayText(vesselSnapshot.mmsi)}</span>
+                      <span className="text-white/45">IMO {displayText(vesselSnapshot.imo)}</span>
+                    </div>
+                  </div>
+                  <span
+                    className="shrink-0 text-[9px] font-mono font-bold tracking-widest border px-2 py-1"
+                    style={{ color: vesselStatusColor, borderColor: `${vesselStatusColor}80`, background: `${vesselStatusColor}12` }}
+                  >
+                    {vesselStatus}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-x-4 gap-y-2">
+                  <AircraftMetric label="type" value={displayText(vesselSnapshot.type)} />
+                  <AircraftMetric label="speed" value={formatSpeed(vesselSnapshot.speed)} accent />
+                  <AircraftMetric label="heading" value={formatHeading(vesselSnapshot.heading)} />
+                  <AircraftMetric label="flag" value={displayText(vesselSnapshot.flag)} />
+                  <AircraftMetric label="callsign" value={displayText(vesselSnapshot.callsign)} />
+                  <AircraftMetric label="status" value={displayText(vesselSnapshot.navStatus)} />
+                  <AircraftMetric label="destination" value={displayText(vesselSnapshot.destination)} />
+                  <AircraftMetric label="eta" value={displayText(vesselSnapshot.eta)} />
+                  <AircraftMetric label="coords" value={formatCoordinates(vesselSnapshot)} />
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-[9px] font-mono text-white/45 tracking-widest uppercase">
+                LAST SEEN {formatFeedAge(vesselSnapshot.lastSeenAt)}
+              </span>
+              <span className="text-[9px] font-mono text-[var(--gold-primary)]/65 tracking-widest uppercase ml-auto">
+                {vesselSnapshot.source}
+              </span>
+            </div>
+            {vesselLinks.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {vesselLinks.map(link => (
+                  <a
+                    key={link.id}
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 border border-[#26C6DA]/35 bg-[#26C6DA]/10 px-2 py-1 text-[9px] font-mono font-bold uppercase tracking-widest text-[#26C6DA] hover:bg-[#26C6DA]/20 transition-colors"
+                  >
+                    {link.label}
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                ))}
+              </div>
+            )}
+            {vesselPhoto?.sourceUrl && (
+              <div className="mt-2 text-[8px] font-mono text-white/35 truncate">
+                IMAGE: <a href={vesselPhoto.sourceUrl} target="_blank" rel="noreferrer" className="text-white/50 hover:text-white">{vesselPhoto.sourceName || 'Photo'}</a>
+                {vesselPhoto.attribution ? ` // ${vesselPhoto.attribution}` : ''}
+              </div>
+            )}
           </div>
         )}
 
@@ -284,7 +719,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
               d3AlphaDecay={0.05} d3VelocityDecay={0.4} cooldownTicks={100}
               linkDirectionalParticles={1} linkDirectionalParticleWidth={1.5}
               linkDirectionalParticleSpeed={0.003}
-              linkDirectionalParticleColor={() => 'rgba(212,175,55,0.6)'}
+              linkDirectionalParticleColor={() => 'rgba(var(--gold-rgb),0.6)'}
             />
           )}
           {graphData.nodes.length === 0 && !loading && (
@@ -303,7 +738,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
             >
               <div className="flex items-center justify-between mb-3 border-b border-[var(--border-secondary)] pb-2">
                 <div className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 bg-[var(--gold-primary)] animate-osiris-pulse shadow-[0_0_8px_var(--gold-primary)]" />
+                  <div className="w-1.5 h-1.5 bg-[var(--gold-primary)] animate-sentra-pulse shadow-[0_0_8px_var(--gold-primary)]" />
                   {(() => { const I = TYPE_ICONS[selectedNode.type] || Globe; return <I className="w-4 h-4" style={{ color: TYPE_COLORS[selectedNode.type] }} />; })()}
                   <span className="text-[13px] font-mono font-bold text-white tracking-[0.1em] uppercase">{selectedNode.label}</span>
                 </div>

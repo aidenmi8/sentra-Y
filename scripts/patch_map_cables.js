@@ -1,12 +1,12 @@
 const fs = require('fs');
 
-// Patch OsirisMap.tsx
-let mapContent = fs.readFileSync('src/components/OsirisMap.tsx', 'utf8');
+// Patch SentraMap.tsx
+let mapContent = fs.readFileSync('src/components/SentraMap.tsx', 'utf8');
 
 if (!mapContent.includes("'submarine-cables'")) {
   // Add source
   mapContent = mapContent.replace("'scan-targets', 'sdk-entities', 'sdk-links'];", "'scan-targets', 'sdk-entities', 'sdk-links', 'submarine-cables'];");
-  
+
   // Add layer
   const layerStr = `
         map.addLayer({ id: 'submarine-cables-line', type: 'line', source: 'submarine-cables', paint: {
@@ -31,9 +31,9 @@ if (!mapContent.includes("'submarine-cables'")) {
     }, [mapReady, data.submarine_cables, activeLayers.cables, setGeo, setVis]);
 `;
   mapContent = mapContent.replace("return <div ref={containerRef}", geoStr + "  return <div ref={containerRef}");
-  
-  fs.writeFileSync('src/components/OsirisMap.tsx', mapContent);
-  console.log('Patched OsirisMap.tsx');
+
+  fs.writeFileSync('src/components/SentraMap.tsx', mapContent);
+  console.log('Patched SentraMap.tsx');
 }
 
 // Patch LayerPanel.tsx
@@ -42,7 +42,7 @@ let panelContent = fs.readFileSync('src/components/LayerPanel.tsx', 'utf8');
 if (!panelContent.includes("key: 'cables'")) {
   const cableItemStr = `      { key: 'cables', label: 'Subsea Data Cables', icon: Network, color: '#4FC3F7', dataKey: 'submarine_cables' },\n`;
   panelContent = panelContent.replace("{ key: 'maritime', label: 'Maritime / Naval', icon: Anchor, color: '#4FC3F7', dataKey: 'maritime_ships' },", cableItemStr + "        { key: 'maritime', label: 'Maritime / Naval', icon: Anchor, color: '#4FC3F7', dataKey: 'maritime_ships' },");
-  
+
   fs.writeFileSync('src/components/LayerPanel.tsx', panelContent);
   console.log('Patched LayerPanel.tsx');
 }

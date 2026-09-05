@@ -2,7 +2,7 @@
 import { NextResponse } from 'next/server';
 
 /**
- * OSIRIS — Financial Markets & Commodities API
+ * Sentra Mi8 — Financial Markets & Commodities API
  * Defense stocks, oil, gold, silver, natural gas, wheat, crypto
  * Multiple source fallback: Yahoo Finance → Google Finance scraping → static estimates
  */
@@ -106,7 +106,7 @@ const OIL_NAMES: Record<string, string> = { 'CL=F': 'WTI Crude', 'BZ=F': 'Brent 
 const CRYPTO_NAMES: Record<string, string> = { 'BTC-USD': 'Bitcoin', 'ETH-USD': 'Ethereum' };
 const INDEX_NAMES: Record<string, string> = { 'ES=F': 'S&P 500', 'NQ=F': 'Nasdaq 100' };
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     // Fetch all in parallel
     const [stockResults, oilResults, commodityResults, yahooResults, indexResults, cgCrypto] = await Promise.all([
@@ -141,27 +141,38 @@ export async function GET() {
     // --- SCM Integration: Chokepoint-Commodity Correlation ---
     const scm_alerts: string[] = [];
     try {
-      const maritimeRes = await fetch('http://127.0.0.1:3000/api/maritime', { signal: AbortSignal.timeout(3000) });
+      const maritimeRes = await fetch(new URL('/api/maritime', req.url), { signal: AbortSignal.timeout(3000) });
       if (maritimeRes.ok) {
         const maritimeData = await maritimeRes.json();
         const chokepoints = maritimeData.chokepoints || [];
-        
-        const hormuz = chokepoints.find((c: any) => c.name === 'Strait of Hormuz');
-        const suez = chokepoints.find((c: any) => c.name === 'Suez Canal');
-        const panama = chokepoints.find((c: any) => c.name === 'Panama Canal');
 
-        if (hormuz && (hormuz.risk === 'CRITICAL' || hormuz.risk === 'HIGH')) {
-          scm_alerts.push(`🚨 HORMUZ ${hormuz.risk}: High risk of WTI/Brent Crude price spike due to congestion.`);
+        // Only a live-AIS-derived risk raises an alert. The standing baseline
+        // assessment is permanent by nature, so alerting on it produced a
+        // "congestion" warning that was true every single request.
+        const alertable = (name: string) => {
+          const choke = chokepoints.find((c: any) => c.name === name);
+          if (!choke) return null;
+          if (choke.risk !== 'CRITICAL' && choke.risk !== 'HIGH') return null;
+          if (!String(choke.risk_basis || '').startsWith('live')) return null;
+          return choke;
+        };
+
+        const hormuz = alertable('Strait of Hormuz');
+        const suez = alertable('Suez Canal');
+        const panama = alertable('Panama Canal');
+
+        if (hormuz) {
+          scm_alerts.push(`🚨 HORMUZ ${hormuz.risk}: WTI/Brent price-spike exposure — ${hormuz.risk_basis}.`);
         }
-        if (suez && (suez.risk === 'CRITICAL' || suez.risk === 'HIGH')) {
-          scm_alerts.push(`🚨 SUEZ ${suez.risk}: Potential supply chain delays impacting European markets and Energy.`);
+        if (suez) {
+          scm_alerts.push(`🚨 SUEZ ${suez.risk}: European supply-chain and energy delays — ${suez.risk_basis}.`);
         }
-        if (panama && (panama.risk === 'CRITICAL' || panama.risk === 'HIGH')) {
-          scm_alerts.push(`🚨 PANAMA ${panama.risk}: LNG and Agriculture (Corn/Wheat) shipment delays expected.`);
+        if (panama) {
+          scm_alerts.push(`🚨 PANAMA ${panama.risk}: LNG and agriculture shipment delays — ${panama.risk_basis}.`);
         }
       }
-    } catch (e) {
-      // Ignore if maritime is unreachable
+    } catch {
+      // Maritime unreachable — emit no alerts rather than a stale assumption.
     }
 
     return NextResponse.json({

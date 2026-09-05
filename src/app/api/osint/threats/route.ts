@@ -5,12 +5,12 @@ import { isRateLimited, getClientIp } from '@/lib/ssrf-guard';
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const query = searchParams.get('query'); // Optional: IP or domain to check
-  
+
   const clientIp = getClientIp(req);
   if (isRateLimited(clientIp, 20, 60_000)) {
     return NextResponse.json({ error: 'Rate limit exceeded' }, { status: 429 });
   }
-  
+
   try {
     const results: any = { timestamp: new Date().toISOString() };
 
@@ -20,31 +20,37 @@ export async function GET(req: Request) {
         signal: AbortSignal.timeout(8000),
         headers: { 'Accept': 'application/json' },
       });
-      // Public endpoint may require auth, fall back to activity feed
-      if (!res.ok) {
+      const normalizePulses = (data: any) => (data.results || []).slice(0, 10).map((p: any) => ({
+        name: p.name,
+        description: p.description?.slice(0, 200),
+        created: p.created,
+        modified: p.modified,
+        tags: p.tags?.slice(0, 5),
+        adversary: p.adversary,
+        targeted_countries: p.targeted_countries,
+        indicators_count: p.indicator_count,
+      }));
+
+      if (res.ok) {
+        // The success path previously assigned nothing: pulses were only ever
+        // populated inside the !res.ok branch, so a working subscribed feed
+        // produced an empty result.
+        results.pulses = normalizePulses(await res.json());
+      } else {
+        // The subscribed endpoint may require auth — fall back to the public activity feed.
         const actRes = await fetch('https://otx.alienvault.com/api/v1/pulses/activity?limit=10', {
           signal: AbortSignal.timeout(8000),
         });
         if (actRes.ok) {
-          const data = await actRes.json();
-          results.pulses = (data.results || []).slice(0, 10).map((p: any) => ({
-            name: p.name,
-            description: p.description?.slice(0, 200),
-            created: p.created,
-            modified: p.modified,
-            tags: p.tags?.slice(0, 5),
-            adversary: p.adversary,
-            targeted_countries: p.targeted_countries,
-            indicators_count: p.indicator_count,
-          }));
+          results.pulses = normalizePulses(await actRes.json());
         }
       }
-    } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); }
+    } catch (e) { console.warn('[Sentra Mi8] Suppressed error:', e instanceof Error ? e.message : e); }
 
     // 2. Check specific IP/domain if provided
     if (query) {
       const isIP = /^(\d{1,3}\.){3}\d{1,3}$/.test(query);
-      
+
       if (isIP) {
         // Check against Tor exit node list
         try {
@@ -73,7 +79,7 @@ export async function GET(req: Request) {
               asn: data.asn,
             };
           }
-        } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); }
+        } catch (e) { console.warn('[Sentra Mi8] Suppressed error:', e instanceof Error ? e.message : e); }
       } else {
         // Domain check
         try {
@@ -91,7 +97,7 @@ export async function GET(req: Request) {
               } : null,
             };
           }
-        } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); }
+        } catch (e) { console.warn('[Sentra Mi8] Suppressed error:', e instanceof Error ? e.message : e); }
       }
     }
 

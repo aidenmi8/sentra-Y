@@ -1,18 +1,16 @@
-name: osiris
+name: sentra-mi8
 services:
-  osiris:
-    # Pulls the prebuilt image from GitHub Container Registry. The `build:`
-    # block is kept as a fallback: `docker compose up -d` uses the registry
-    # image if present/pullable, otherwise builds locally from the Dockerfile.
-    # Run `docker compose pull` to fetch the latest published image.
-    image: ghcr.io/aiacos/osiris:latest
+  sentra-mi8:
+    # Builds the Sentra Mi8 Next.js standalone image from this checkout.
+    image: sentra-mi8:latest
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: osiris
-    # Host port is configurable via OSIRIS_PORT in .env (defaults to 3000).
+    container_name: sentra-mi8
+    # Host port is configurable via SENTRA_MI8_PORT in .env (defaults to 3000).
+    # Deprecated compatibility alias: OSIRIS_PORT.
     ports:
-      - "${OSIRIS_PORT:-3000}:3000"
+      - "${SENTRA_MI8_PORT:-${OSIRIS_PORT:-3000}}:3000"
     # Optional API keys / scanner backend — copy .env.template to .env and
     # fill in what you need. Missing file is ignored (keyless feeds still work).
     env_file:
@@ -27,33 +25,37 @@ services:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     networks:
-      - default
-      - umami_default
+      default:
+        aliases:
+          - osiris
+      umami_default:
 
-  osiris-cache:
+  sentra-mi8-cache:
     image: nginx:alpine
-    container_name: osiris-cache
+    container_name: sentra-mi8-cache
     ports:
       - "8080:8080"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - nginx-cache:/var/cache/nginx
     depends_on:
-      - osiris
+      - sentra-mi8
     restart: unless-stopped
     networks:
-      - default
+      default:
 
-  osiris-intel:
+  sentra-mi8-intel:
     build:
       context: ./intel
       dockerfile: Dockerfile
-    container_name: osiris-intel
+    container_name: sentra-mi8-intel
     ports:
       - "4000:4000"
     restart: unless-stopped
     networks:
-      - default
+      default:
+        aliases:
+          - osiris-intel
 
 volumes:
   nginx-cache:
@@ -67,13 +69,13 @@ x-casaos:
   architectures:
     - amd64
     - arm64
-  main: osiris
-  author: simplifaisoul
-  developer: simplifaisoul
+  main: sentra-mi8
+  author: aidenmi8
+  developer: aidenmi8
   category: Network
   description:
     en_us: >-
-      OSIRIS is a production-grade open-source OSINT situational-awareness
+      Sentra Mi8 is a production-grade open-source OSINT situational-awareness
       dashboard. It aggregates real-time global intelligence across aviation,
       maritime, CCTV networks, seismic activity, wildfires, news feeds,
       weather, space weather, cyber threats (CVEs) and conflict zones into a
@@ -82,38 +84,65 @@ x-casaos:
   tagline:
     en_us: Real-time global OSINT intelligence dashboard
   title:
-    en_us: OSIRIS
-  icon: https://raw.githubusercontent.com/Aiacos/osiris/master/public/casaos-icon.png
-  thumbnail: https://raw.githubusercontent.com/Aiacos/osiris/master/public/og-image.png
+    en_us: Sentra Mi8
+  icon: https://raw.githubusercontent.com/aidenmi8/sentra-Y/master/public/casaos-icon.png
+  thumbnail: https://raw.githubusercontent.com/aidenmi8/sentra-Y/master/public/og-image.png
   screenshot_link:
-    - https://raw.githubusercontent.com/Aiacos/osiris/master/public/og-image.png
+    - https://raw.githubusercontent.com/aidenmi8/sentra-Y/master/public/og-image.png
   scheme: http
   hostname: ""
   port_map: "3000"
   index: /
   webui_port: 3000
   envs:
+    - container: GEMINI_API_KEY_1
+      description:
+        en_us: "(Optional) Gemini API key for AI analyst and briefing routes. Add GEMINI_API_KEY_2..8 in .env for rotation."
+    - container: AIS_API_KEY
+      description:
+        en_us: "(Optional) aisstream.io key for live maritime vessel tracking."
     - container: SCANNER_URL
       description:
         en_us: "(Optional) RECON scanner backend URL, e.g. http://scanner:7700"
     - container: SCANNER_KEY
       description:
-        en_us: "(Optional) RECON scanner shared secret (must match backend OSIRIS_KEY)."
+        en_us: "(Optional) RECON scanner shared secret (must match backend SENTRA_MI8_KEY; deprecated OSIRIS_KEY alias may still work during migration)."
+    - container: SDK_INGEST_KEY
+      description:
+        en_us: "(Optional) Shared write key required for /api/sdk/ingest."
+    - container: GITHUB_WEBHOOK_SECRET
+      description:
+        en_us: "(Optional) GitHub webhook HMAC secret."
+    - container: GITHUB_WEBHOOK_FORWARD_URL
+      description:
+        en_us: "(Optional) Internal bridge URL that /api/github-webhook forwards to."
+    - container: UMAMI_ENDPOINT
+      description:
+        en_us: "(Optional) Umami /api/send endpoint. Analytics are disabled if unset."
+    - container: UMAMI_WEBSITE_ID
+      description:
+        en_us: "(Optional) Umami website id. Analytics are disabled if unset."
+    - container: SENTRA_MI8_INTEL_URL
+      description:
+        en_us: "(Optional) Override for the Sentra Mi8 intel service URL."
+    - container: SENTRA_MI8_TELEGRAM_CHANNELS
+      description:
+        en_us: "(Optional) Comma-separated public Telegram preview channel usernames."
+    - container: IPTV_ORG_BASE_URL
+      description:
+        en_us: "(Optional) IPTV-org-compatible country playlist/API source override."
     - container: FIRMS_API_KEY
       description:
-        en_us: "(Optional) NASA FIRMS API key for active-fire data."
-    - container: AIS_API_KEY
-      description:
-        en_us: "(Optional) aisstream.io key for maritime vessel tracking."
+        en_us: "(Planned/reserved) NASA FIRMS keyed API; current route uses public FIRMS CSV."
     - container: OPENSKY_CLIENT_ID
       description:
-        en_us: "(Optional) OpenSky OAuth2 client id for higher aircraft rate limits."
+        en_us: "(Planned/reserved) OpenSky OAuth2 client id; current route uses keyless adsb.lol."
     - container: OPENSKY_CLIENT_SECRET
       description:
-        en_us: "(Optional) OpenSky OAuth2 client secret."
+        en_us: "(Planned/reserved) OpenSky OAuth2 client secret."
     - container: N2YO_API_KEY
       description:
-        en_us: "(Optional) N2YO key for satellite tracking."
+        en_us: "(Planned/reserved) N2YO key; current route uses public TLE sources."
   ports:
     - container: "3000"
       description:

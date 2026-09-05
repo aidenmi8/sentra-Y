@@ -21,7 +21,7 @@ import {
 import type { IntelligenceContext } from '@/lib/ai-engine';
 
 /* ═══════════════════════════════════════════════════════════════
-   OSIRIS — AI Intelligence Analyst Panel
+   Sentra Mi8 — AI Intelligence Analyst Panel
    Premium glass-panel chat interface for real-time intelligence
    analysis powered by Gemini 2.0 Flash
    ═══════════════════════════════════════════════════════════════ */
@@ -102,6 +102,9 @@ interface ChatMessage {
 interface AiAnalystProps {
   data: DashboardData;
 }
+
+const SENTRA_GEMINI_KEY_STORAGE = 'sentra-mi8-gemini-key';
+const DEPRECATED_OSIRIS_GEMINI_KEY_STORAGE = 'osiris-gemini-key';
 
 /* ─────────────────────────────────────────────────────────────
    Helpers
@@ -199,10 +202,12 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load saved key on mount
+  // Load saved key on mount, migrating the deprecated OSIRIS alias if present.
   useEffect(() => {
-    const saved = localStorage.getItem('osiris-gemini-key');
+    const saved = localStorage.getItem(SENTRA_GEMINI_KEY_STORAGE)
+      || localStorage.getItem(DEPRECATED_OSIRIS_GEMINI_KEY_STORAGE);
     if (saved) {
+      localStorage.setItem(SENTRA_GEMINI_KEY_STORAGE, saved);
       setApiKeyInput(saved);
       setKeySaved(true);
     }
@@ -222,7 +227,8 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
 
   const getHeaders = useCallback((): Record<string, string> => {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const savedKey = localStorage.getItem('osiris-gemini-key');
+    const savedKey = localStorage.getItem(SENTRA_GEMINI_KEY_STORAGE)
+      || localStorage.getItem(DEPRECATED_OSIRIS_GEMINI_KEY_STORAGE);
     if (savedKey) {
       headers['x-gemini-key'] = savedKey;
     }
@@ -346,14 +352,15 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
   const saveApiKey = useCallback(() => {
     const key = apiKeyInput.trim();
     if (key) {
-      localStorage.setItem('osiris-gemini-key', key);
+      localStorage.setItem(SENTRA_GEMINI_KEY_STORAGE, key);
       setKeySaved(true);
       setTimeout(() => setShowSettings(false), 600);
     }
   }, [apiKeyInput]);
 
   const clearApiKey = useCallback(() => {
-    localStorage.removeItem('osiris-gemini-key');
+    localStorage.removeItem(SENTRA_GEMINI_KEY_STORAGE);
+    localStorage.removeItem(DEPRECATED_OSIRIS_GEMINI_KEY_STORAGE);
     setApiKeyInput('');
     setKeySaved(false);
   }, []);
@@ -373,10 +380,10 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
       onClick={() => setIsOpen(true)}
       className="fixed bottom-[90px] right-5 md:bottom-8 md:right-8 z-[500] w-14 h-14 rounded-full flex items-center justify-center cursor-pointer border-0"
       style={{
-        background: 'linear-gradient(135deg, rgba(212, 175, 55, 0.2) 0%, rgba(212, 175, 55, 0.08) 100%)',
-        border: '1px solid rgba(212, 175, 55, 0.4)',
+        background: 'linear-gradient(135deg, rgba(var(--gold-rgb), 0.2) 0%, rgba(var(--gold-rgb), 0.08) 100%)',
+        border: '1px solid rgba(var(--gold-rgb), 0.4)',
         boxShadow:
-          '0 0 30px rgba(212, 175, 55, 0.2), 0 0 60px rgba(212, 175, 55, 0.1), 0 4px 20px rgba(0, 0, 0, 0.5)',
+          '0 0 30px rgba(var(--gold-rgb), 0.2), 0 0 60px rgba(var(--gold-rgb), 0.1), 0 4px 20px rgba(0, 0, 0, 0.5)',
       }}
       aria-label="Open AI Intelligence Analyst"
     >
@@ -420,9 +427,9 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
               className="fixed bottom-0 right-0 md:bottom-6 md:right-6 z-[700] w-full md:w-[440px] h-[85vh] md:h-[680px] md:max-h-[85vh] flex flex-col md:rounded-2xl overflow-hidden"
               style={{
                 background: 'linear-gradient(180deg, rgba(8, 10, 20, 0.96) 0%, rgba(6, 6, 12, 0.98) 100%)',
-                border: '1px solid rgba(212, 175, 55, 0.2)',
+                border: '1px solid rgba(var(--gold-rgb), 0.2)',
                 boxShadow:
-                  '0 0 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(212, 175, 55, 0.08), 0 1px 0 rgba(212, 175, 55, 0.1) inset',
+                  '0 0 60px rgba(0, 0, 0, 0.8), 0 0 30px rgba(var(--gold-rgb), 0.08), 0 1px 0 rgba(var(--gold-rgb), 0.1) inset',
                 backdropFilter: 'blur(40px) saturate(1.5)',
               }}
             >
@@ -430,8 +437,8 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
               <div
                 className="relative flex items-center justify-between px-4 py-3 shrink-0"
                 style={{
-                  background: 'linear-gradient(90deg, rgba(212, 175, 55, 0.06) 0%, transparent 50%, rgba(0, 229, 255, 0.04) 100%)',
-                  borderBottom: '1px solid rgba(212, 175, 55, 0.15)',
+                  background: 'linear-gradient(90deg, rgba(var(--gold-rgb), 0.06) 0%, transparent 50%, rgba(var(--cyan-rgb), 0.04) 100%)',
+                  borderBottom: '1px solid rgba(var(--gold-rgb), 0.15)',
                 }}
               >
                 {/* Scan line accent */}
@@ -445,10 +452,10 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                 <div className="flex items-center gap-2.5">
                   <div className="relative">
                     <Shield className="w-4.5 h-4.5 text-[var(--gold-primary)]" />
-                    <div className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-[var(--alert-green)] animate-osiris-pulse" />
+                    <div className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full bg-[var(--alert-green)] animate-sentra-pulse" />
                   </div>
                   <div className="flex flex-col">
-                    <span className="hud-text text-[11px] text-[var(--text-heading)]">OSIRIS ANALYST</span>
+                    <span className="hud-text text-[11px] text-[var(--text-heading)]">SENTRA MI8 ANALYST</span>
                     <span className="text-[7px] font-mono tracking-[0.2em] text-[var(--text-muted)]">
                       GEMINI 2.0 FLASH • ONLINE
                     </span>
@@ -499,8 +506,8 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                     <div
                       className="px-4 py-3 space-y-2.5"
                       style={{
-                        background: 'rgba(212, 175, 55, 0.03)',
-                        borderBottom: '1px solid rgba(212, 175, 55, 0.1)',
+                        background: 'rgba(var(--gold-rgb), 0.03)',
+                        borderBottom: '1px solid rgba(var(--gold-rgb), 0.1)',
                       }}
                     >
                       <div className="flex items-center gap-2">
@@ -526,8 +533,8 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                               onClick={saveApiKey}
                               className="px-3 rounded-lg text-[9px] font-mono tracking-wider transition-all"
                               style={{
-                                background: keySaved ? 'rgba(0, 230, 118, 0.15)' : 'rgba(212, 175, 55, 0.1)',
-                                border: `1px solid ${keySaved ? 'rgba(0, 230, 118, 0.3)' : 'rgba(212, 175, 55, 0.2)'}`,
+                                background: keySaved ? 'rgba(0, 230, 118, 0.15)' : 'rgba(var(--gold-rgb), 0.1)',
+                                border: `1px solid ${keySaved ? 'rgba(0, 230, 118, 0.3)' : 'rgba(var(--gold-rgb), 0.2)'}`,
                                 color: keySaved ? 'var(--alert-green)' : 'var(--gold-primary)',
                               }}
                             >
@@ -547,7 +554,7 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                         )}
                       </div>
                       <p className="text-[8px] font-mono text-[var(--text-muted)] leading-relaxed">
-                        Your key is stored locally and sent only to the OSIRIS server. Get a free key at{' '}
+                        Your key is stored locally and sent only to the Sentra Mi8 server. Get a free key at{' '}
                         <a
                           href="https://aistudio.google.com/apikey"
                           target="_blank"
@@ -584,8 +591,8 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                       <div
                         className="w-16 h-16 rounded-2xl flex items-center justify-center"
                         style={{
-                          background: 'linear-gradient(135deg, rgba(212, 175, 55, 0.1) 0%, rgba(0, 229, 255, 0.05) 100%)',
-                          border: '1px solid rgba(212, 175, 55, 0.2)',
+                          background: 'linear-gradient(135deg, rgba(var(--gold-rgb), 0.1) 0%, rgba(var(--cyan-rgb), 0.05) 100%)',
+                          border: '1px solid rgba(var(--gold-rgb), 0.2)',
                         }}
                       >
                         <Brain className="w-7 h-7 text-[var(--gold-primary)]" />
@@ -619,7 +626,7 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                           }}
                           className="w-full text-left px-3 py-2 rounded-lg text-[10px] font-mono text-[var(--text-secondary)] transition-all hover:text-[var(--text-primary)] hover:bg-[var(--hover-accent)]"
                           style={{
-                            border: '1px solid rgba(212, 175, 55, 0.08)',
+                            border: '1px solid rgba(var(--gold-rgb), 0.08)',
                           }}
                         >
                           <span className="text-[var(--gold-dim)] mr-1.5">›</span>
@@ -646,8 +653,8 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                       style={
                         msg.role === 'user'
                           ? {
-                              background: 'linear-gradient(135deg, rgba(0, 229, 255, 0.12) 0%, rgba(0, 229, 255, 0.06) 100%)',
-                              border: '1px solid rgba(0, 229, 255, 0.2)',
+                              background: 'linear-gradient(135deg, rgba(var(--cyan-rgb), 0.12) 0%, rgba(var(--cyan-rgb), 0.06) 100%)',
+                              border: '1px solid rgba(var(--cyan-rgb), 0.2)',
                             }
                           : msg.isError
                           ? {
@@ -655,8 +662,8 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                               border: '1px solid rgba(255, 61, 61, 0.2)',
                             }
                           : {
-                              background: 'linear-gradient(135deg, rgba(212, 175, 55, 0.08) 0%, rgba(212, 175, 55, 0.03) 100%)',
-                              border: '1px solid rgba(212, 175, 55, 0.12)',
+                              background: 'linear-gradient(135deg, rgba(var(--gold-rgb), 0.08) 0%, rgba(var(--gold-rgb), 0.03) 100%)',
+                              border: '1px solid rgba(var(--gold-rgb), 0.12)',
                             }
                       }
                     >
@@ -679,7 +686,7 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                               : 'var(--gold-primary)',
                           }}
                         >
-                          {msg.role === 'user' ? 'OPERATOR' : 'OSIRIS ANALYST'}
+                          {msg.role === 'user' ? 'OPERATOR' : 'SENTRA MI8 ANALYST'}
                         </span>
                         <span className="text-[7px] font-mono text-[var(--text-muted)] ml-auto">
                           {new Date(msg.timestamp).toLocaleTimeString([], {
@@ -714,8 +721,8 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                     <div
                       className="rounded-xl rounded-bl-sm px-4 py-3 flex items-center gap-2.5"
                       style={{
-                        background: 'linear-gradient(135deg, rgba(212, 175, 55, 0.08) 0%, rgba(212, 175, 55, 0.03) 100%)',
-                        border: '1px solid rgba(212, 175, 55, 0.12)',
+                        background: 'linear-gradient(135deg, rgba(var(--gold-rgb), 0.08) 0%, rgba(var(--gold-rgb), 0.03) 100%)',
+                        border: '1px solid rgba(var(--gold-rgb), 0.12)',
                       }}
                     >
                       <Loader2 className="w-3.5 h-3.5 text-[var(--gold-primary)] animate-spin" />
@@ -742,7 +749,7 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
               <div
                 className="shrink-0 px-3 py-2.5"
                 style={{
-                  borderTop: '1px solid rgba(212, 175, 55, 0.1)',
+                  borderTop: '1px solid rgba(var(--gold-rgb), 0.1)',
                   background: 'rgba(6, 6, 12, 0.8)',
                 }}
               >
@@ -753,8 +760,8 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                     disabled={isLoading}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[9px] font-mono tracking-[0.1em] uppercase transition-all disabled:opacity-40"
                     style={{
-                      background: 'rgba(212, 175, 55, 0.08)',
-                      border: '1px solid rgba(212, 175, 55, 0.2)',
+                      background: 'rgba(var(--gold-rgb), 0.08)',
+                      border: '1px solid rgba(var(--gold-rgb), 0.2)',
                       color: 'var(--gold-primary)',
                     }}
                   >
@@ -774,7 +781,7 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                     className="flex-1 rounded-xl overflow-hidden transition-colors"
                     style={{
                       background: 'var(--bg-tertiary)',
-                      border: '1px solid rgba(212, 175, 55, 0.1)',
+                      border: '1px solid rgba(var(--gold-rgb), 0.1)',
                     }}
                   >
                     <textarea
@@ -804,10 +811,10 @@ export default function AiAnalyst({ data }: AiAnalystProps) {
                     style={{
                       background:
                         inputText.trim() && !isLoading
-                          ? 'linear-gradient(135deg, rgba(0, 229, 255, 0.2) 0%, rgba(0, 229, 255, 0.1) 100%)'
+                          ? 'linear-gradient(135deg, rgba(var(--cyan-rgb), 0.2) 0%, rgba(var(--cyan-rgb), 0.1) 100%)'
                           : 'rgba(255, 255, 255, 0.03)',
                       border: `1px solid ${
-                        inputText.trim() && !isLoading ? 'rgba(0, 229, 255, 0.3)' : 'rgba(255, 255, 255, 0.06)'
+                        inputText.trim() && !isLoading ? 'rgba(var(--cyan-rgb), 0.3)' : 'rgba(255, 255, 255, 0.06)'
                       }`,
                     }}
                   >

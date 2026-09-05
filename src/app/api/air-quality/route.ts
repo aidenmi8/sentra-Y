@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 /**
- * OSIRIS — Air Quality Monitoring API
+ * Sentra Mi8 — Air Quality Monitoring API
  * Fetches real-time global air quality data from OpenAQ
  * FREE — No API key required
  * Data: PM2.5, PM10, O3, NO2, SO2, CO measurements worldwide
@@ -32,7 +32,7 @@ export async function GET() {
         if (!loc.coordinates?.latitude || !loc.coordinates?.longitude) continue;
         const pm25 = loc.measurements?.find((m: any) => m.parameter === 'pm25');
         if (!pm25) continue;
-        
+
         // AQI color coding based on PM2.5 (WHO/EPA scale)
         const val = pm25.value;
         let level = 'Good';

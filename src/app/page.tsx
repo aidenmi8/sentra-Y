@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Layers, BarChart3, Newspaper, Search, X, Globe, MapPinned, Radar, Satellite, Moon, ExternalLink, AlertTriangle, Activity, Database, Wifi, Play, Network } from 'lucide-react';
+import { Layers, BarChart3, Newspaper, Search, X, Globe, MapPinned, Radar, Satellite, Moon, ExternalLink, AlertTriangle, Activity, Database, Wifi, Play, Network, KeyRound } from 'lucide-react';
 import IntelFeed from '@/components/IntelFeed';
 import MarketsPanel from '@/components/MarketsPanel';
 import ScmPanel from '@/components/ScmPanel';
@@ -15,12 +15,30 @@ import ViewPresets from '@/components/ViewPresets';
 import KeyboardShortcuts from '@/components/KeyboardShortcuts';
 import GlobalStatusBar from '@/components/GlobalStatusBar';
 import LiveAlerts from '@/components/LiveAlerts';
+import LiveStreamPlayer, { type LiveFeedMode } from '@/components/LiveStreamPlayer';
 
-const OsirisMap = dynamic(() => import('@/components/OsirisMap'), { ssr: false });
+const SentraMap = dynamic(() => import('@/components/SentraMap'), { ssr: false });
 const LayerPanel = dynamic(() => import('@/components/LayerPanel'));
 const CameraViewer = dynamic(() => import('@/components/CameraViewer'));
+const CameraBrowser = dynamic(() => import('@/components/CameraBrowser'));
+const DrIntelPanel = dynamic(() => import('@/components/DrIntelPanel'));
 const OsintPanel = dynamic(() => import('@/components/OsintPanel'));
 const EntityGraphPanel = dynamic(() => import('@/components/EntityGraphPanel'));
+
+const SPLASH_BOOT_DURATION_MS = 4000;
+const SPLASH_PROGRESS_DELAY_SECONDS = 0.5;
+const SPLASH_PROGRESS_DURATION_SECONDS = 3.4;
+const SPLASH_STATUS_STAGES = [
+  { text: 'ESTABLISHING SECURE CONNECTION...', delay: 0.5 },
+  { text: 'INITIALIZING FEEDS...', delay: 1.4 },
+  { text: 'CALIBRATING SENSORS...', delay: 2.3 },
+  { text: 'SYSTEM READY', delay: 3.25 },
+];
+const DEFAULT_MAP_VIEW = {
+  latitude: 40.8836,
+  longitude: 0,
+  zoom: 1.59,
+};
 
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false);
@@ -76,11 +94,19 @@ const ActiveEntityCount = ({ data }: { data: Record<string, unknown[]> }) => {
   return <span className="text-[var(--alert-green)] font-bold tabular-nums">{count.toLocaleString()}</span>;
 };
 
-/** Extracts a watchable YouTube URL from embed/channel URLs */
-function getYouTubeWatchUrl(url: string): string {
+/** Extracts an external URL from embed/channel URLs */
+function getExternalStreamUrl(url: string): string {
   if (url.includes('channel=')) return `https://www.youtube.com/channel/${url.split('channel=')[1].split('&')[0]}/live`;
   if (url.includes('/embed/')) return `https://www.youtube.com/watch?v=${url.split('/embed/')[1].split('?')[0]}`;
   return url;
+}
+
+function inferLiveFeedMode(url: string, embedAllowed = true): LiveFeedMode {
+  if (!embedAllowed) return 'external';
+  if (/\.m3u8(?:[?#].*)?$/i.test(url)) return 'hls';
+  if (/\.(mp4|m4v|webm|ogv|ogg|mov|ts)(?:[?#].*)?$/i.test(url)) return 'video';
+  if (/youtube(?:-nocookie)?\.com\/embed|player\.vimeo\.com|rumble\.com\/embed/i.test(url)) return 'iframe';
+  return 'external';
 }
 
 export default function Dashboard() {
@@ -89,7 +115,12 @@ export default function Dashboard() {
   const data = dataRef.current;
 
   const [backendStatus, setBackendStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
-  const [mapView, setMapView] = useState({ zoom: 2.5, latitude: 20 });
+  const [mapView, setMapView] = useState(() => ({
+    zoom: DEFAULT_MAP_VIEW.zoom,
+    latitude: DEFAULT_MAP_VIEW.latitude,
+    longitude: DEFAULT_MAP_VIEW.longitude,
+  }));
+  const [urlStateReady, setUrlStateReady] = useState(false);
   const [flyToLocation, setFlyToLocation] = useState<{ lat: number; lng: number; ts: number } | null>(null);
   const [globalStats, setGlobalStats] = useState<any>(null);
   const mouseCoordsRef = useRef<{ lat: number; lng: number } | null>(null);
@@ -114,11 +145,76 @@ export default function Dashboard() {
   const [scanTargets, setScanTargets] = useState<any[]>([]);
   const [entityGraphTarget, setEntityGraphTarget] = useState<{ type: string; id: string; label?: string; properties?: Record<string, any> } | null>(null);
   const [demoMode, setDemoMode] = useState(false);
-  const [osirisTheme, setOsirisTheme] = useState<'core'|'ghost'>('core');
+  const [sentraTheme, setSentraTheme] = useState<'core'|'ghost'>('core');
+  const [adminAvailable, setAdminAvailable] = useState(false);
+  const [showCameraBrowser, setShowCameraBrowser] = useState(false);
+  const [showDrIntel, setShowDrIntel] = useState(false);
+  const [evidenceAvailable, setEvidenceAvailable] = useState(false);
+  const [worldCameras, setWorldCameras] = useState<any[]>([]);
+  const [worldCamerasLoading, setWorldCamerasLoading] = useState(false);
+  const [worldCamerasError, setWorldCamerasError] = useState<string | null>(null);
 
+  /**
+   * Worldwide cameras are viewport-scoped: an unbounded Overpass query for
+   * surveillance nodes times out, so the bbox is derived from the current view.
+   */
+  const loadWorldCameras = useCallback(async () => {
+    setWorldCamerasLoading(true);
+    setWorldCamerasError(null);
+    try {
+      const span = Math.max(0.4, 180 / Math.pow(2, mapView.zoom));
+      const south = Math.max(-90, mapView.latitude - span);
+      const north = Math.min(90, mapView.latitude + span);
+      const west = Math.max(-180, mapView.longitude - span);
+      const east = Math.min(180, mapView.longitude + span);
+      const res = await fetch(`/api/cameras/worldwide?bbox=${south},${west},${north},${east}`, { cache: 'no-store' });
+      const body = await res.json();
+      if (!res.ok) {
+        setWorldCamerasError(body.error || `Request failed with HTTP ${res.status}`);
+        return;
+      }
+      setWorldCameras(body.cameras || []);
+      const zoomHint = body.providers?.osm?.message;
+      if ((body.cameras || []).length === 0 && zoomHint) setWorldCamerasError(zoomHint);
+    } catch (e) {
+      setWorldCamerasError(e instanceof Error ? e.message : 'Could not load cameras.');
+    } finally {
+      setWorldCamerasLoading(false);
+    }
+  }, [mapView.latitude, mapView.longitude, mapView.zoom]);
+
+  // The provider admin link only appears when the surface is actually reachable:
+  // enabled by flag and served over loopback.
   useEffect(() => {
-    document.body.className = osirisTheme === 'core' ? '' : `theme-${osirisTheme}`;
-  }, [osirisTheme]);
+    let cancelled = false;
+    fetch('/api/dr/evidence/status', { cache: 'no-store' })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => { if (d?.available) setEvidenceAvailable(true); })
+      .catch(() => { /* evidence surface absent */ });
+        fetch('/api/admin/status', { cache: 'no-store' })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => { if (!cancelled && d?.available) setAdminAvailable(true); })
+      .catch(() => { /* admin surface absent — link stays hidden */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Toggle only the theme class. Assigning className wholesale used to wipe the
+  // `antialiased` class layout.tsx sets, permanently degrading font smoothing.
+  // `theme-switching` scopes the 600ms colour transition to the switch itself.
+  useEffect(() => {
+    document.body.classList.toggle('theme-ghost', sentraTheme === 'ghost');
+  }, [sentraTheme]);
+
+  const isFirstThemeRender = useRef(true);
+  useEffect(() => {
+    if (isFirstThemeRender.current) {
+      isFirstThemeRender.current = false;
+      return;
+    }
+    document.body.classList.add('theme-switching');
+    const timer = setTimeout(() => document.body.classList.remove('theme-switching'), 700);
+    return () => clearTimeout(timer);
+  }, [sentraTheme]);
 
   const isMobile = useIsMobile();
   const startTime = useRef(Date.now());
@@ -144,6 +240,7 @@ export default function Dashboard() {
     radiation: false,
     infrastructure: false,
     global_incidents: true,
+    conflict_zones: true,
     war_alerts: false,
     gps_jamming: false,
     day_night: true,
@@ -151,16 +248,17 @@ export default function Dashboard() {
     sdk_sea: true,
     sdk_air: true,
     sdk_naval: true,
-    
+
     malware: false,
   });
   const [liveFeedUrl, setLiveFeedUrl] = useState<string | null>(null);
   const [liveFeedName, setLiveFeedName] = useState('');
   const [liveFeedEmbedAllowed, setLiveFeedEmbedAllowed] = useState(true);
+  const [liveFeedMode, setLiveFeedMode] = useState<LiveFeedMode>('iframe');
 
   // Splash screen
   useEffect(() => {
-    const splashTimer = setTimeout(() => setShowSplash(false), 2500);
+    const splashTimer = setTimeout(() => setShowSplash(false), SPLASH_BOOT_DURATION_MS);
     return () => clearTimeout(splashTimer);
   }, []);
 
@@ -173,7 +271,7 @@ export default function Dashboard() {
     const zoom = parseFloat(p.get('zoom') || '');
     if (!isNaN(lat) && !isNaN(lon)) {
       setFlyToLocation({ lat, lng: lon, ts: Date.now() });
-      if (!isNaN(zoom)) setMapView(v => ({ ...v, zoom }));
+      setMapView(v => ({ ...v, latitude: lat, longitude: lon, zoom: !isNaN(zoom) ? zoom : v.zoom }));
     }
     const layers = p.get('layers');
     if (layers) {
@@ -184,6 +282,7 @@ export default function Dashboard() {
         return next;
       });
     }
+    setUrlStateReady(true);
   }, []);
 
   // URL state: update URL on view change (debounced)
@@ -193,8 +292,8 @@ export default function Dashboard() {
     if (urlTimer.current) clearTimeout(urlTimer.current);
     urlTimer.current = setTimeout(() => {
       const p = new URLSearchParams();
-      p.set('lat', (mapView.latitude ?? 20).toFixed(4));
-      p.set('lon', '0');
+      p.set('lat', (mapView.latitude ?? DEFAULT_MAP_VIEW.latitude).toFixed(4));
+      p.set('lon', (mapView.longitude ?? DEFAULT_MAP_VIEW.longitude).toString());
       p.set('zoom', mapView.zoom.toFixed(2));
       const active = Object.entries(activeLayers).filter(([,v]) => v).map(([k]) => k).join(',');
       p.set('layers', active);
@@ -225,7 +324,7 @@ export default function Dashboard() {
       if (e.key === 'm') setShowMarkets(p => !p);
       if (e.key === 'c') setShowScmPanel(p => !p);
       if (e.key === 'i') setShowIntel(p => !p);
-      if (e.key === 'r') setFlyToLocation({ lat: 20, lng: 0, ts: Date.now() });
+      if (e.key === 'r') setFlyToLocation({ lat: DEFAULT_MAP_VIEW.latitude, lng: DEFAULT_MAP_VIEW.longitude, ts: Date.now() });
       if (e.key === 'g') setMapProjection(p => p === 'globe' ? 'mercator' : 'globe');
     };
     const fsHandler = () => setIsFullscreen(!!document.fullscreenElement);
@@ -259,7 +358,7 @@ export default function Dashboard() {
           setLocationLabel(label);
           lastGeocodedPos.current = coords;
         }
-      } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); }
+      } catch (e) { console.warn('[Sentra Mi8] Suppressed error:', e instanceof Error ? e.message : e); }
     }, 3000); // 3s debounce (was 1.5s)
   }, []);
 
@@ -269,27 +368,118 @@ export default function Dashboard() {
     try {
       const res = await fetch(`/api/region-dossier?lat=${coords.lat}&lng=${coords.lng}`);
       if (res.ok) setRegionDossier(await res.json());
-    } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); } finally { setDossierLoading(false); }
+    } catch (e) { console.warn('[Sentra Mi8] Suppressed error:', e instanceof Error ? e.message : e); } finally { setDossierLoading(false); }
   }, []);
+
+  const openLiveFeed = useCallback((url: string, name: string, options?: { mode?: LiveFeedMode; embedAllowed?: boolean }) => {
+    const embedAllowed = options?.embedAllowed ?? true;
+    setLiveFeedUrl(url);
+    setLiveFeedName(name);
+    setLiveFeedEmbedAllowed(embedAllowed);
+    setLiveFeedMode(options?.mode || inferLiveFeedMode(url, embedAllowed));
+  }, []);
+
+  const openAircraftIntel = useCallback((entity: any) => {
+    const callsign = entity.callsign?.trim();
+    setEntityGraphTarget({
+      type: 'aircraft',
+      id: callsign || entity.registration || entity.icao24,
+      label: callsign || entity.registration || entity.icao24,
+      properties: {
+        callsign,
+        registration: entity.registration,
+        icao24: entity.icao24,
+        model: entity.model,
+        altitude: entity.altitude ?? entity.alt,
+        alt: entity.altitude ?? entity.alt,
+        speedKnots: entity.speedKnots ?? entity.speed_knots ?? entity.speed,
+        speed_knots: entity.speedKnots ?? entity.speed_knots ?? entity.speed,
+        heading: entity.heading,
+        squawk: entity.squawk,
+        category: entity.category,
+        aircraftCategory: entity.aircraftCategory ?? entity.aircraft_category,
+        aircraft_category: entity.aircraftCategory ?? entity.aircraft_category,
+        lat: entity.lat,
+        lng: entity.lng,
+        grounded: entity.grounded,
+        nacP: entity.nacP ?? entity.nac_p,
+        nac_p: entity.nacP ?? entity.nac_p,
+        feedTimestamp: entity.feedTimestamp ?? entity.feed_timestamp,
+        feed_timestamp: entity.feedTimestamp ?? entity.feed_timestamp,
+        source: entity.source,
+      },
+    });
+    setShowEntityGraph(true);
+  }, []);
+
   // Entity click handler (hoisted from JSX to comply with Rules of Hooks - Fixes #113)
   const handleEntityClick = useCallback((entity: any) => {
+    if (entity?.type === 'vessel' || entity?.mmsi || entity?.imo) {
+      setEntityGraphTarget({
+        type: 'vessel',
+        id: String(entity.imo || entity.mmsi || entity.name || ''),
+        label: entity.name || entity.imo || entity.mmsi,
+        properties: {
+          mmsi: entity.mmsi,
+          imo: entity.imo,
+          name: entity.name,
+          callsign: entity.callsign,
+          flag: entity.flag,
+          speed: entity.speed,
+          heading: entity.heading,
+          destination: entity.destination,
+          type: entity.shipType || '',
+          navStatus: entity.navStatus,
+          eta: entity.eta,
+          draught: entity.draught,
+          lat: entity.lat,
+          lng: entity.lng,
+          timestamp: entity.timestamp,
+        },
+      });
+      setShowEntityGraph(true);
+      return;
+    }
+    if (entity?.type === 'aircraft' || entity?.callsign || entity?.icao24) {
+      openAircraftIntel(entity);
+      return;
+    }
     if (entity?.type === 'cctv') setActiveCamera(entity);
     if (entity?.type === 'live_news' && entity.url) {
-      setLiveFeedUrl(entity.url);
-      setLiveFeedName(entity.name);
-      setLiveFeedEmbedAllowed(entity.embed_allowed !== false);
+      const embedAllowed = entity.embed_allowed !== false;
+      openLiveFeed(entity.url, entity.name, { embedAllowed });
     }
-  }, []);
+  }, [openAircraftIntel, openLiveFeed]);
 
   // Global handler for map popups to manually open the Intel Graph
   useEffect(() => {
-    (window as any).openOsirisIntel = (entity: any) => {
-      if (entity?.callsign || entity?.icao24) {
-        setEntityGraphTarget({ type: 'aircraft', id: entity.callsign?.trim() || entity.icao24, label: entity.callsign?.trim() || entity.icao24, properties: { model: entity.model, registration: entity.registration, icao24: entity.icao24 } });
+    (window as any).openSentraIntel = (entity: any) => {
+      if (entity?.type === 'vessel' || entity?.mmsi || entity?.imo) {
+        setEntityGraphTarget({
+          type: 'vessel',
+          id: String(entity.imo || entity.mmsi || entity.name || ''),
+          label: entity.name || entity.imo || entity.mmsi,
+          properties: {
+            mmsi: entity.mmsi,
+            imo: entity.imo,
+            name: entity.name,
+            callsign: entity.callsign,
+            flag: entity.flag,
+            speed: entity.speed,
+            heading: entity.heading,
+            destination: entity.destination,
+            type: entity.shipType || '',
+            navStatus: entity.navStatus,
+            eta: entity.eta,
+            draught: entity.draught,
+            lat: entity.lat,
+            lng: entity.lng,
+            timestamp: entity.timestamp,
+          },
+        });
         setShowEntityGraph(true);
-      } else if (entity?.type === 'vessel' || entity?.mmsi || entity?.imo) {
-        setEntityGraphTarget({ type: 'vessel', id: entity.imo || entity.mmsi || entity.name, label: entity.name || entity.imo, properties: { flag: entity.flag, speed: entity.speed, destination: entity.destination } });
-        setShowEntityGraph(true);
+      } else if (entity?.callsign || entity?.icao24) {
+        openAircraftIntel(entity);
       } else if (entity?.type === 'ip' && entity?.ip) {
         setEntityGraphTarget({ type: 'ip', id: entity.ip, label: entity.ip, properties: { threat_type: entity.threat_type, status: entity.status } });
         setShowEntityGraph(true);
@@ -298,8 +488,13 @@ export default function Dashboard() {
         setShowEntityGraph(true);
       }
     };
-    return () => { delete (window as any).openOsirisIntel; };
-  }, []);
+    // Deprecated compatibility alias for older inline popup callbacks.
+    (window as any).openOsirisIntel = (window as any).openSentraIntel;
+    return () => {
+      delete (window as any).openSentraIntel;
+      delete (window as any).openOsirisIntel;
+    };
+  }, [openAircraftIntel]);
 
   // ── SHARED FETCH UTILITY (Fixes #107 — single definition, not 3 copies) ──
   const fetchEndpoint = useCallback(async (url: string, transform?: (d: any) => any, options?: RequestInit) => {
@@ -315,7 +510,7 @@ export default function Dashboard() {
         setBackendStatus('connected');
       }
     } catch (e) {
-      console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e);
+      console.warn('[Sentra Mi8] Suppressed error:', e instanceof Error ? e.message : e);
       setBackendStatus('error');
     }
   }, []);
@@ -332,7 +527,7 @@ export default function Dashboard() {
       try {
         const r = await fetch('/api/space-weather');
         if (r.ok) setSpaceWeather(await r.json());
-      } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); }
+      } catch (e) { console.warn('[Sentra Mi8] Suppressed error:', e instanceof Error ? e.message : e); }
     }, 5000);
 
     // Polling — OPTIMIZED intervals to minimize edge requests
@@ -410,19 +605,20 @@ export default function Dashboard() {
       layerFetchedRef.current.add('gdelt');
     }
 
-    // Submarine Cables
+    // Submarine fibre-optic cables (TeleGeography open data, status-classified)
     if (activeLayers.cables && !layerFetchedRef.current.has('cables')) {
-      (async () => {
-        try {
-          const ts = Date.now();
-      const res = await fetch(`/data/submarine-cables.json?v=${ts}`);
-          if (res.ok) {
-             const cablesData = await res.json();
-             dataRef.current = { ...dataRef.current, submarine_cables: cablesData.features };
-             setDataVersion(v => v + 1);
-          }
-        } catch (e) { console.warn('Cables fetch failed'); }
-      })();
+      fetchEndpoint('/api/cables', d => ({
+        submarine_cables: d.features || [],
+        submarine_cable_summary: d.summary || null,
+        submarine_cable_meta: {
+          source: d.source,
+          source_url: d.source_url,
+          degraded: Boolean(d.degraded),
+          stale: Boolean(d.stale),
+          unresolved: d.unresolved?.length || 0,
+          not_operational_source: d.not_operational_source ?? null,
+        },
+      }));
       layerFetchedRef.current.add('cables');
     }
 
@@ -454,7 +650,7 @@ export default function Dashboard() {
       intervals.push(setInterval(() => fetchEndpoint('/api/radiation', d => ({ radiation: d.stations })), 300000)); // 5m
     }
     if (activeLayers.maritime) {
-      intervals.push(setInterval(() => fetchEndpoint('/api/maritime', d => ({ maritime_ports: d.ports, maritime_chokepoints: d.chokepoints, maritime_ships: d.ships })), 10000)); // 10s
+      intervals.push(setInterval(() => fetchEndpoint('/api/maritime', d => ({ maritime_ports: d.ports, maritime_chokepoints: d.chokepoints, maritime_ships: d.ships })), 20000));
     }
     return () => intervals.forEach(clearInterval);
   }, [activeLayers, fetchEndpoint]);
@@ -463,7 +659,7 @@ export default function Dashboard() {
 
   // Reactive layer fetch: handled by layerFetchedRef above (no duplicate)
 
-  // ── OSIRIS SDK — Intelligence Fusion Layer ──
+  // ── Sentra Mi8 SDK — Intelligence Fusion Layer ──
   // Produces node coordinates for the SDK network mesh visualization.
   // Does NOT duplicate existing layer visuals — SDK layer is LINES ONLY.
   // Cameras are excluded — they have their own dedicated layer.
@@ -562,7 +758,7 @@ export default function Dashboard() {
           >
             {/* ── Scanline CRT overlay ── */}
             <div className="absolute inset-0 pointer-events-none z-[1]" style={{
-              backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(212,175,55,0.015) 2px, rgba(212,175,55,0.015) 4px)',
+              backgroundImage: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(var(--gold-rgb),0.015) 2px, rgba(var(--gold-rgb),0.015) 4px)',
               animation: 'splashScanDrift 8s linear infinite',
             }} />
 
@@ -586,10 +782,10 @@ export default function Dashboard() {
                 animate={{ opacity: 1, scale: 1, rotate: 360 }}
                 transition={{ opacity: { duration: 0.6 }, scale: { duration: 0.8, ease: 'easeOut' }, rotate: { duration: 20, repeat: Infinity, ease: 'linear' } }}
                 className="absolute inset-0 rounded-full"
-                style={{ border: '1px solid rgba(212,175,55,0.2)' }}
+                style={{ border: '1px solid rgba(var(--gold-rgb),0.2)' }}
               >
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full" style={{ background: 'var(--gold-primary)', boxShadow: '0 0 12px var(--gold-primary), 0 0 24px rgba(212,175,55,0.3)' }} />
-                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-1 h-1 rounded-full" style={{ background: 'rgba(212,175,55,0.5)', boxShadow: '0 0 6px rgba(212,175,55,0.3)' }} />
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2 h-2 rounded-full" style={{ background: 'var(--gold-primary)', boxShadow: '0 0 12px var(--gold-primary), 0 0 24px rgba(var(--gold-rgb),0.3)' }} />
+                <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1/2 w-1 h-1 rounded-full" style={{ background: 'rgba(var(--gold-rgb),0.5)', boxShadow: '0 0 6px rgba(var(--gold-rgb),0.3)' }} />
               </motion.div>
 
               {/* Middle ring — faster counter-clockwise */}
@@ -598,10 +794,10 @@ export default function Dashboard() {
                 animate={{ opacity: 1, scale: 1, rotate: -360 }}
                 transition={{ opacity: { duration: 0.6, delay: 0.15 }, scale: { duration: 0.8, delay: 0.15, ease: 'easeOut' }, rotate: { duration: 12, repeat: Infinity, ease: 'linear' } }}
                 className="absolute rounded-full"
-                style={{ inset: '18px', border: '1px solid rgba(0,229,255,0.15)' }}
+                style={{ inset: '18px', border: '1px solid rgba(var(--cyan-rgb),0.15)' }}
               >
-                <div className="absolute top-1/2 right-0 translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full" style={{ background: 'var(--cyan-primary)', boxShadow: '0 0 10px var(--cyan-primary), 0 0 20px rgba(0,229,255,0.2)' }} />
-                <div className="absolute bottom-0 left-1/4 translate-y-1/2 w-1 h-1 rounded-full" style={{ background: 'rgba(0,229,255,0.4)' }} />
+                <div className="absolute top-1/2 right-0 translate-x-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full" style={{ background: 'var(--cyan-primary)', boxShadow: '0 0 10px var(--cyan-primary), 0 0 20px rgba(var(--cyan-rgb),0.2)' }} />
+                <div className="absolute bottom-0 left-1/4 translate-y-1/2 w-1 h-1 rounded-full" style={{ background: 'rgba(var(--cyan-rgb),0.4)' }} />
               </motion.div>
 
               {/* Inner ring — fastest clockwise */}
@@ -610,7 +806,7 @@ export default function Dashboard() {
                 animate={{ opacity: 1, scale: 1, rotate: 360 }}
                 transition={{ opacity: { duration: 0.6, delay: 0.3 }, scale: { duration: 0.8, delay: 0.3, ease: 'easeOut' }, rotate: { duration: 7, repeat: Infinity, ease: 'linear' } }}
                 className="absolute rounded-full"
-                style={{ inset: '40px', border: '1px solid rgba(212,175,55,0.25)' }}
+                style={{ inset: '40px', border: '1px solid rgba(var(--gold-rgb),0.25)' }}
               >
                 <div className="absolute top-0 left-1/4 -translate-y-1/2 w-1.5 h-1.5 rounded-full" style={{ background: 'var(--gold-primary)', boxShadow: '0 0 8px var(--gold-primary)' }} />
               </motion.div>
@@ -621,17 +817,17 @@ export default function Dashboard() {
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ delay: 0.4, duration: 0.6, ease: [0.34, 1.56, 0.64, 1] }}
                 className="relative w-12 h-12 rounded-full flex items-center justify-center"
-                style={{ border: '2px solid var(--gold-primary)', boxShadow: '0 0 20px rgba(212,175,55,0.15), inset 0 0 20px rgba(212,175,55,0.05)' }}
+                style={{ border: '2px solid var(--gold-primary)', boxShadow: '0 0 20px rgba(var(--gold-rgb),0.15), inset 0 0 20px rgba(var(--gold-rgb),0.05)' }}
               >
                 <motion.div
                   animate={{ opacity: [0.3, 0.8, 0.3] }}
                   transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
                   className="w-5 h-5 rounded-full"
-                  style={{ background: 'radial-gradient(circle, rgba(212,175,55,0.4) 0%, rgba(212,175,55,0.05) 70%)' }}
+                  style={{ background: 'radial-gradient(circle, rgba(var(--gold-rgb),0.4) 0%, rgba(var(--gold-rgb),0.05) 70%)' }}
                 />
                 {/* Crosshair lines */}
-                <div className="absolute w-[1px] h-full" style={{ background: 'linear-gradient(to bottom, transparent, rgba(212,175,55,0.3), transparent)' }} />
-                <div className="absolute w-full h-[1px]" style={{ background: 'linear-gradient(to right, transparent, rgba(212,175,55,0.3), transparent)' }} />
+                <div className="absolute w-[1px] h-full" style={{ background: 'linear-gradient(to bottom, transparent, rgba(var(--gold-rgb),0.3), transparent)' }} />
+                <div className="absolute w-full h-[1px]" style={{ background: 'linear-gradient(to right, transparent, rgba(var(--gold-rgb),0.3), transparent)' }} />
               </motion.div>
 
               {/* Faint pulsing radar sweep */}
@@ -640,22 +836,22 @@ export default function Dashboard() {
                 animate={{ opacity: [0, 0.15, 0], rotate: [0, 360] }}
                 transition={{ opacity: { duration: 3, repeat: Infinity }, rotate: { duration: 3, repeat: Infinity, ease: 'linear' }, delay: 0.6 }}
                 className="absolute inset-[10px] rounded-full"
-                style={{ background: 'conic-gradient(from 0deg, transparent 0deg, rgba(212,175,55,0.15) 40deg, transparent 80deg)' }}
+                style={{ background: 'conic-gradient(from 0deg, transparent 0deg, rgba(var(--gold-rgb),0.15) 40deg, transparent 80deg)' }}
               />
             </div>
 
-            {/* ── OSIRIS title — letter-by-letter stagger ── */}
+            {/* ── Sentra Mi8 title — letter-by-letter stagger ── */}
             <div className="flex items-center gap-[2px] mb-3 z-[2]">
-              {'OSIRIS'.split('').map((letter, i) => (
+              {'SENTRA MI8'.split('').map((letter, i) => (
                 <motion.span
                   key={i}
                   initial={{ opacity: 0, y: 20, filter: 'blur(8px)' }}
                   animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
                   transition={{ delay: 0.5 + i * 0.08, duration: 0.5, ease: 'easeOut' }}
                   className="text-4xl md:text-5xl font-bold tracking-[0.5em] font-mono"
-                  style={{ color: 'var(--text-heading)', textShadow: '0 0 30px rgba(212,175,55,0.2)' }}
+                  style={{ color: 'var(--text-heading)', textShadow: '0 0 30px rgba(var(--gold-rgb),0.2)' }}
                 >
-                  {letter}
+                  {letter === ' ' ? '\u00A0' : letter}
                 </motion.span>
               ))}
             </div>
@@ -677,29 +873,29 @@ export default function Dashboard() {
             {/* ── Multi-stage progress bar ── */}
             <div className="w-64 md:w-80 z-[2]">
               {/* Thin progress track */}
-              <div className="relative w-full h-[2px] rounded-full overflow-hidden" style={{ background: 'rgba(212,175,55,0.1)' }}>
+              <div className="relative w-full h-[2px] rounded-full overflow-hidden" style={{ background: 'rgba(var(--gold-rgb),0.1)' }}>
                 <motion.div
                   initial={{ width: '0%' }}
                   animate={{ width: ['0%', '25%', '50%', '78%', '100%'] }}
-                  transition={{ duration: 2.2, delay: 0.5, times: [0, 0.25, 0.5, 0.75, 1], ease: 'easeInOut' }}
+                  transition={{
+                    duration: SPLASH_PROGRESS_DURATION_SECONDS,
+                    delay: SPLASH_PROGRESS_DELAY_SECONDS,
+                    times: [0, 0.25, 0.5, 0.75, 1],
+                    ease: 'easeInOut',
+                  }}
                   className="absolute inset-y-0 left-0 rounded-full"
-                  style={{ background: 'linear-gradient(90deg, var(--gold-primary), var(--cyan-primary), var(--gold-primary))', boxShadow: '0 0 12px rgba(212,175,55,0.4)' }}
+                  style={{ background: 'linear-gradient(90deg, var(--gold-primary), var(--cyan-primary), var(--gold-primary))', boxShadow: '0 0 12px rgba(var(--gold-rgb),0.4)' }}
                 />
               </div>
 
               {/* Status messages — cycling */}
               <div className="mt-3 h-4 flex items-center justify-center">
-                {[
-                  { text: 'ESTABLISHING SECURE CONNECTION...', delay: 0.5 },
-                  { text: 'INITIALIZING FEEDS...', delay: 1.1 },
-                  { text: 'CALIBRATING SENSORS...', delay: 1.7 },
-                  { text: 'SYSTEM READY', delay: 2.2 },
-                ].map((stage, i) => (
+                {SPLASH_STATUS_STAGES.map((stage, i) => (
                   <motion.span
                     key={i}
                     initial={{ opacity: 0 }}
                     animate={{ opacity: [0, 1, 1, 0] }}
-                    transition={{ delay: stage.delay, duration: 0.6, times: [0, 0.1, 0.7, 1] }}
+                    transition={{ delay: stage.delay, duration: 0.75, times: [0, 0.1, 0.82, 1] }}
                     className="absolute text-[9px] font-mono tracking-[0.25em]"
                     style={{ color: i === 3 ? 'var(--cyan-primary)' : 'var(--text-muted)' }}
                   >
@@ -712,7 +908,7 @@ export default function Dashboard() {
             {/* ── Decorative grid lines ── */}
             <div className="absolute inset-0 pointer-events-none z-[0]" style={{ opacity: 0.03 }}>
               <div className="absolute inset-0" style={{
-                backgroundImage: 'linear-gradient(rgba(212,175,55,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(212,175,55,0.5) 1px, transparent 1px)',
+                backgroundImage: 'linear-gradient(rgba(var(--gold-rgb),0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(var(--gold-rgb),0.5) 1px, transparent 1px)',
                 backgroundSize: '60px 60px',
               }} />
             </div>
@@ -746,22 +942,29 @@ export default function Dashboard() {
 
       {/* ── MAP ── */}
       <ErrorBoundary name="Map">
-        <OsirisMap 
-          key={osirisTheme}
-          data={data} 
-          activeLayers={activeLayers} 
-          projection={mapProjection} 
-          mapStyle={mapStyle === 'satellite' ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' : 'dark'} 
-          onEntityClick={handleEntityClick} 
-          onMouseCoords={handleMouseCoords} 
-          onRightClick={handleRightClick} 
-          onViewStateChange={setMapView} 
-          flyToLocation={flyToLocation}
-          sweepData={sweepData}
-          scanTargets={scanTargets}
-          demoMode={demoMode}
-          theme={osirisTheme}
-        />
+        {urlStateReady && (
+          <SentraMap
+            key={sentraTheme}
+            data={data}
+            activeLayers={activeLayers}
+            projection={mapProjection}
+            mapStyle={mapStyle === 'satellite' ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' : 'dark'}
+            onEntityClick={handleEntityClick}
+            onMouseCoords={handleMouseCoords}
+            onRightClick={handleRightClick}
+            onViewStateChange={setMapView}
+            initialView={{
+              lat: mapView.latitude,
+              lng: mapView.longitude,
+              zoom: mapView.zoom,
+            }}
+            flyToLocation={flyToLocation}
+            sweepData={sweepData}
+            scanTargets={scanTargets}
+            demoMode={demoMode}
+            theme={sentraTheme}
+          />
+        )}
       </ErrorBoundary>
 
 
@@ -807,12 +1010,12 @@ export default function Dashboard() {
       {/* ── HEADER ── */}
       <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 1, delay: 2.5 }} className={`absolute top-4 left-6 z-[200] pointer-events-none flex flex-col`}>
         <div className="flex items-baseline gap-2">
-          <h1 className="text-xl font-bold tracking-[0.4em] text-[var(--gold-primary)] font-mono">OSIRIS</h1>
+          <h1 className="text-xl font-bold tracking-[0.35em] text-[var(--gold-primary)] font-mono">SENTRA MI8</h1>
           <span className="text-[10px] text-[var(--text-muted)] font-mono tracking-[0.15em] opacity-80">GLOBAL INTELLIGENCE COMMAND</span>
         </div>
         <div className="flex items-center gap-4 mt-1">
           <span className="text-[5px] text-[var(--text-muted)] font-mono tracking-[0.3em] uppercase opacity-40">
-            POWERED BY OSIRIS OPEN SOURCE INTELLIGENCE · C2 ENGINE: PHYSICAL COMMAND CORE · SENSORS: ORBITAL LATTICE · NET: LYCAN NETWORK
+            POWERED BY SENTRA MI8 OPEN SOURCE INTELLIGENCE · C2 ENGINE: PHYSICAL COMMAND CORE · SENSORS: ORBITAL LATTICE · NET: LYCAN NETWORK
           </span>
         </div>
       </motion.div>
@@ -834,6 +1037,16 @@ export default function Dashboard() {
         </span>
 
         <UptimeClock />
+        {adminAvailable && (
+          <a
+            href="/admin/providers"
+            className="pointer-events-auto flex items-center gap-1 px-2 py-0.5 rounded border border-[var(--border-primary)] text-[var(--gold-primary)] hover:border-[var(--gold-primary)]/50 transition-colors"
+            title="Manage provider API keys"
+          >
+            <KeyRound className="w-2.5 h-2.5" />
+            <span className="hidden lg:inline">KEYS</span>
+          </a>
+        )}
         <span className="text-[10px] font-bold tracking-[0.2em] text-[var(--text-muted)] opacity-50 ml-2">V.4.1</span>
       </motion.div>
 
@@ -841,7 +1054,7 @@ export default function Dashboard() {
       {isMobile && (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 2.5 }} className="absolute top-3 right-3 z-[200] pointer-events-auto flex items-center gap-2">
           <a href='https://ko-fi.com/M8D41ZYW4Z' target='_blank' className="glass-panel px-2 py-1 flex items-center gap-1.5 text-[7px] font-mono tracking-widest hover:opacity-80 transition-opacity border-[var(--gold-primary)]/40 bg-[var(--gold-primary)]/10">
-            <div className="w-1 h-1 rounded-full bg-[var(--gold-primary)] animate-osiris-pulse" />
+            <div className="w-1 h-1 rounded-full bg-[var(--gold-primary)] animate-sentra-pulse" />
             <span className="text-[var(--gold-primary)] font-bold">SUPPORT PROJECT</span>
           </a>
         </motion.div>
@@ -850,7 +1063,7 @@ export default function Dashboard() {
 
 
       {/* ── NEW SIDEBAR (Root Level) ── */}
-      {showLayers && !isMobile && <LayerPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} theme={osirisTheme} setTheme={setOsirisTheme} />}
+      {showLayers && !isMobile && <LayerPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} theme={sentraTheme} setTheme={setSentraTheme} />}
 
 
 
@@ -891,23 +1104,100 @@ export default function Dashboard() {
         </div>
 
         <div className="relative group">
-          <button onClick={() => { setShowAlerts(!showAlerts); setShowIntel(false); setShowMarkets(false); setShowEntityGraph(false); }} className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${showAlerts ? 'bg-[#FF3D3D]/20' : 'hover:bg-white/10'}`}>
-            <AlertTriangle className={`w-4 h-4 ${showAlerts ? 'text-[#FF3D3D]' : 'text-white/60'}`} />
+          <button onClick={() => { setShowAlerts(!showAlerts); setShowIntel(false); setShowMarkets(false); setShowEntityGraph(false); }} className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${showAlerts ? 'bg-[var(--alert-red)]/20' : 'hover:bg-white/10'}`}>
+            <AlertTriangle className={`w-4 h-4 ${showAlerts ? 'text-[var(--alert-red)]' : 'text-white/60'}`} />
           </button>
           {/* Alerts Panel Slideout */}
           <AnimatePresence>
             {showAlerts && (
               <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} className="absolute right-12 top-1/2 -translate-y-1/2 w-80">
-                <LiveAlerts data={data} onLocate={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} onWatchFeed={(url, name) => { setLiveFeedUrl(url); setLiveFeedName(name); }} />
+                <LiveAlerts data={data} onLocate={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })} onWatchFeed={openLiveFeed} />
               </motion.div>
             )}
           </AnimatePresence>
         </div>
 
         <div className="relative group">
-          <button onClick={() => { setShowEntityGraph(!showEntityGraph); setShowIntel(false); setShowMarkets(false); setShowAlerts(false); }} className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${showEntityGraph ? 'bg-[#D4AF37]/20' : 'hover:bg-white/10'}`}>
-            <Network className={`w-4 h-4 ${showEntityGraph ? 'text-[#D4AF37]' : 'text-white/60'}`} />
+          <button onClick={() => { setShowEntityGraph(!showEntityGraph); setShowIntel(false); setShowMarkets(false); setShowAlerts(false); }} className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${showEntityGraph ? 'bg-[var(--gold-primary)]/20' : 'hover:bg-white/10'}`}>
+            <Network className={`w-4 h-4 ${showEntityGraph ? 'text-[var(--gold-primary)]' : 'text-white/60'}`} />
           </button>
+        </div>
+
+        <div className="relative group">
+          <button
+            onClick={() => {
+              const next = !showCameraBrowser;
+              setShowCameraBrowser(next);
+              setShowIntel(false); setShowMarkets(false); setShowAlerts(false); setShowEntityGraph(false); setShowDrIntel(false);
+              if (next && worldCameras.length === 0) loadWorldCameras();
+            }}
+            aria-label="Worldwide cameras"
+            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${showCameraBrowser ? 'bg-[var(--cyan-primary)]/20' : 'hover:bg-white/10'}`}
+          >
+            <Globe className={`w-4 h-4 ${showCameraBrowser ? 'text-[var(--cyan-primary)]' : 'text-white/60'}`} />
+          </button>
+          <AnimatePresence>
+            {showCameraBrowser && (
+              <motion.div
+                initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}
+                className="absolute right-12 top-1/2 -translate-y-1/2 w-[min(78vw,720px)] h-[76vh] flex"
+              >
+                <CameraBrowser
+                  cameras={worldCameras}
+                  loading={worldCamerasLoading}
+                  error={worldCamerasError}
+                  onRefresh={loadWorldCameras}
+                  onClose={() => setShowCameraBrowser(false)}
+                  onSelect={(cam) => {
+                    if (!cam.stream_url) {
+                      // A mapped position has nothing to play — locate it instead.
+                      setFlyToLocation({ lat: cam.lat, lng: cam.lng, ts: Date.now() });
+                      return;
+                    }
+                    if (cam.stream_type === 'image') {
+                      // Still-image feeds are handled by CameraViewer, not the stream player.
+                      setActiveCamera({
+                        type: 'cctv', id: cam.id, name: cam.name, city: cam.city, country: cam.country,
+                        source: cam.provider_label, feed_url: cam.stream_url,
+                        external_url: cam.external_url, lat: cam.lat, lng: cam.lng,
+                      });
+                      return;
+                    }
+                    openLiveFeed(cam.stream_url, cam.name, { mode: cam.stream_type ?? 'iframe' });
+                  }}
+                  onLocate={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <div className="relative group">
+          <button
+            onClick={() => {
+              const next = !showDrIntel;
+              setShowDrIntel(next);
+              setShowIntel(false); setShowMarkets(false); setShowAlerts(false); setShowEntityGraph(false); setShowCameraBrowser(false);
+            }}
+            aria-label="Dominican Republic intel"
+            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${showDrIntel ? 'bg-[var(--gold-primary)]/20' : 'hover:bg-white/10'}`}
+          >
+            <Newspaper className={`w-4 h-4 ${showDrIntel ? 'text-[var(--gold-primary)]' : 'text-white/60'}`} />
+          </button>
+          <AnimatePresence>
+            {showDrIntel && (
+              <motion.div
+                initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}
+                className="absolute right-12 top-1/2 -translate-y-1/2 w-[min(80vw,460px)] h-[80vh] flex"
+              >
+                <DrIntelPanel
+                  evidenceAvailable={evidenceAvailable}
+                  onClose={() => setShowDrIntel(false)}
+                  onLocate={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>}
 
@@ -928,9 +1218,9 @@ export default function Dashboard() {
               onClick={e => e.stopPropagation()}
             >
               {/* Header */}
-              <div className="flex items-center justify-between px-4 py-2.5 bg-[#111] border-b border-[var(--border-primary)]">
+              <div className="flex items-center justify-between px-4 py-2.5 bg-[var(--surface-1)] border-b border-[var(--border-primary)]">
                 <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-[#FF4081] animate-osiris-pulse" />
+                  <div className="w-2 h-2 rounded-full bg-[#FF4081] animate-sentra-pulse" />
                   <span className="text-[12px] font-mono font-bold text-white tracking-wider">{liveFeedName}</span>
                   <span className="px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 font-mono text-[9px] font-bold">LIVE STREAM</span>
                   {!liveFeedEmbedAllowed && (
@@ -939,12 +1229,12 @@ export default function Dashboard() {
                 </div>
                 <div className="flex items-center gap-3">
                   <a
-                    href={getYouTubeWatchUrl(liveFeedUrl)}
+                    href={getExternalStreamUrl(liveFeedUrl)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[var(--border-primary)] hover:bg-[var(--gold-primary)] hover:text-black text-white transition-colors text-[11px] font-mono"
                   >
-                    <span>Open in YouTube</span>
+                    <span>Open externally</span>
                     <ExternalLink className="w-3 h-3" />
                   </a>
                   <button onClick={() => setLiveFeedUrl(null)} className="text-white/70 hover:text-white transition-colors p-1">
@@ -953,45 +1243,19 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Body — iframe or external card */}
-              {liveFeedEmbedAllowed ? (
-                <div className="w-full aspect-video relative bg-black">
-                  <iframe
-                    src={liveFeedUrl}
-                    className="w-full h-full absolute inset-0"
-                    allow="autoplay; encrypted-media"
-                    allowFullScreen
-                  />
-                </div>
-              ) : (
-                <div className="w-full aspect-video flex items-center justify-center bg-black/95">
-                  <div className="text-center px-8">
-                    <div className="w-14 h-14 rounded-full bg-[#39FF14]/10 border border-[#39FF14]/20 flex items-center justify-center mx-auto mb-4">
-                      <ExternalLink className="w-6 h-6 text-[#39FF14]" />
-                    </div>
-                    <p className="text-[13px] font-mono font-bold text-white tracking-widest mb-2">EMBED RESTRICTED</p>
-                    <p className="text-[11px] font-mono text-white/50 mb-6 max-w-xs">
-                      {liveFeedName} does not allow third-party embedding. Click below to open the live stream directly.
-                    </p>
-                    <a
-                      href={getYouTubeWatchUrl(liveFeedUrl)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 px-6 py-2.5 rounded border border-[#39FF14]/40 text-[#39FF14] font-mono text-[12px] hover:bg-[#39FF14]/10 transition-colors tracking-wider"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      OPEN LIVE STREAM
-                    </a>
-                  </div>
-                </div>
-              )}
+              <LiveStreamPlayer
+                url={liveFeedUrl}
+                title={liveFeedName}
+                mode={liveFeedMode}
+                externalUrl={getExternalStreamUrl(liveFeedUrl)}
+              />
 
               {/* Footer — only show for embeddable feeds */}
               {liveFeedEmbedAllowed && (
-                <div className="bg-[#111]/90 px-4 py-2.5 border-t border-[var(--border-primary)] flex items-center gap-2.5">
+                <div className="bg-[var(--surface-1)]/90 px-4 py-2.5 border-t border-[var(--border-primary)] flex items-center gap-2.5">
                   <AlertTriangle className="w-4 h-4 text-[var(--gold-primary)] shrink-0" />
                   <span className="text-[11px] font-mono text-white/70 leading-relaxed">
-                    If you see &ldquo;Video unavailable&rdquo;, use <strong className="text-[var(--gold-primary)]">Open in YouTube</strong> above.
+                    If playback is blocked or expired, use <strong className="text-[var(--gold-primary)]">Open externally</strong> above.
                   </span>
                 </div>
               )}
@@ -1035,7 +1299,7 @@ export default function Dashboard() {
                 <div className="px-3 pb-3">
                   <div className="flex items-center justify-between mb-2">
                     <span className="hud-text text-[9px] text-[var(--text-primary)]">
-                      {mobilePanel === 'layers' ? 'LAYERS & STATS' : mobilePanel === 'markets' ? 'MARKETS & INTEL' : mobilePanel === 'intel' ? 'INTEL FEED' : mobilePanel === 'recon' ? 'OSIRIS RECON' : 'SEARCH'}
+                      {mobilePanel === 'layers' ? 'LAYERS & STATS' : mobilePanel === 'markets' ? 'MARKETS & INTEL' : mobilePanel === 'intel' ? 'INTEL FEED' : mobilePanel === 'recon' ? 'SENTRA RECON' : 'SEARCH'}
                     </span>
                     <button onClick={() => setMobilePanel(null)} className="text-[var(--text-muted)] p-1"><X className="w-4 h-4" /></button>
                   </div>
@@ -1050,7 +1314,7 @@ export default function Dashboard() {
                           <div><div className="hud-label" style={{fontSize:'6px'}}>NUC</div><div className="hud-value text-[9px]" style={{color:'var(--accent-nuclear)'}}>{(data.infrastructure?.length||0)}</div></div>
                         </div>
                       </div>
-                      <LayerPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} isMobile={true} theme={osirisTheme} setTheme={setOsirisTheme} />
+                      <LayerPanel data={data} activeLayers={activeLayers} setActiveLayers={setActiveLayers} isMobile={true} theme={sentraTheme} setTheme={setSentraTheme} adminAvailable={adminAvailable} />
                       <div className="mt-8">
                         <ViewPresets onNavigate={(lat, lng, zoom) => { setFlyToLocation({ lat, lng, ts: Date.now() }); setMapView(v => ({ ...v, zoom })); setMobilePanel(null); }} />
                       </div>
@@ -1104,7 +1368,7 @@ export default function Dashboard() {
       {/* ── Region Dossier ── */}
       {(regionDossier || dossierLoading) && (
         <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="absolute top-16 md:top-20 left-2 right-2 md:left-1/2 md:right-auto md:-translate-x-1/2 z-[300] md:w-[480px] max-h-[65vh] overflow-y-auto styled-scrollbar">
-          <div className="glass-panel p-5 osiris-glow">
+          <div className="glass-panel p-5 sentra-glow">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-sm font-mono font-bold text-[var(--gold-primary)] tracking-wider">REGION DOSSIER</h2>
               <button onClick={() => { setRegionDossier(null); setDossierLoading(false); }} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-xs">✕</button>

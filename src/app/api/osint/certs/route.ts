@@ -19,7 +19,7 @@ export async function GET(req: Request) {
   try {
     const res = await fetch(`https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`, {
       signal: AbortSignal.timeout(10000),
-      headers: { 'User-Agent': 'Osiris-OSINT/3.0' },
+      headers: { 'User-Agent': 'SentraMi8-OSINT/3.0' },
     });
 
     if (!res.ok) {
@@ -27,7 +27,7 @@ export async function GET(req: Request) {
     }
 
     const certs = await res.json();
-    
+
     // Deduplicate by common name and extract subdomains
     const seen = new Set<string>();
     const subdomains = new Set<string>();

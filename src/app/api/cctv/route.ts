@@ -16,9 +16,11 @@ import { fetchFranceCameras } from './france';
 import { fetchSpainCameras } from './spain';
 import { fetchPolandCameras } from './poland';
 import { fetchJapanCameras } from './japan';
+import { fetchFl511Cameras } from './fl511';
+import { fetchNy511Cameras } from './ny511';
 
 /**
- * OSIRIS — Worldwide CCTV Camera API v2
+ * Sentra Mi8 — Worldwide CCTV Camera API v2
  * Viewport-aware: pass ?region=xx to load cameras for specific regions
  * Supports: uk, us-east, us-west, us-central, canada, europe, asia
  * Or pass ?lat=x&lng=y&radius=5 for proximity-based loading
@@ -60,23 +62,60 @@ async function fetchWSDOTCameras(): Promise<any[]> {
 }
 
 // ── US-WEST: Caltrans California Districts ──
+/**
+ * Caltrans publishes one status file per district. Two details matter:
+ *
+ * 1. The directory segment is NOT zero-padded while the filename IS —
+ *    /data/d3/cctv/cctvStatusD03.json. Requesting /data/d03/ returns HTTP 500,
+ *    which silently cost every single-digit district (3-8), the bulk of the state.
+ * 2. Each record is wrapped in a `cctv` object, so location lives at
+ *    `cam.cctv.location`, not `cam.location`. Reading the latter yielded
+ *    undefined coordinates and filtered out 100% of records.
+ */
+const CALTRANS_DISTRICTS = ['03', '04', '05', '06', '07', '08', '10', '11', '12'];
+
 async function fetchCaltransCameras(): Promise<any[]> {
-  const allCams: any[] = [];
-  for (const dist of ['d03', 'd04', 'd05', 'd06', 'd07', 'd08', 'd10', 'd11', 'd12']) {
-    try {
-      const res = await stealthFetch(`https://cwwp2.dot.ca.gov/data/${dist}/cctv/cctvStatus${dist.toUpperCase()}.json`, { signal: AbortSignal.timeout(8000) });
-      if (!res.ok) continue;
+  const perDistrict = await Promise.allSettled(
+    CALTRANS_DISTRICTS.map(async (padded) => {
+      const dir = `d${Number(padded)}`; // '03' -> 'd3'
+      const res = await stealthFetch(
+        `https://cwwp2.dot.ca.gov/data/${dir}/cctv/cctvStatusD${padded}.json`,
+        { signal: AbortSignal.timeout(15000) },
+      );
+      if (!res.ok) throw new Error(`Caltrans D${padded} HTTP ${res.status}`);
       const data = await res.json();
-      for (const cam of (data?.data || [])) {
-        const lat = parseFloat(cam.location?.latitude);
-        const lng = parseFloat(cam.location?.longitude);
-        const url = cam.cctv?.imageData?.static?.currentImageURL;
-        if (!lat || !lng || !url) continue;
-        allCams.push({ id: `cal-${allCams.length}`, lat, lng, name: cam.location?.locationName || 'Caltrans', city: 'California', country: 'US', feed_url: url, source: 'Caltrans' });
+
+      const cams: any[] = [];
+      for (const record of (data?.data || [])) {
+        const cctv = record?.cctv;
+        if (!cctv) continue;
+        if (String(cctv.inService).toLowerCase() === 'false') continue;
+
+        const lat = parseFloat(cctv.location?.latitude);
+        const lng = parseFloat(cctv.location?.longitude);
+        const still = cctv.imageData?.static?.currentImageURL;
+        if (!Number.isFinite(lat) || !Number.isFinite(lng) || !still) continue;
+
+        // Most Caltrans sites also publish an HLS stream alongside the still.
+        const hls = cctv.imageData?.streamingVideoURL || null;
+        cams.push({
+          id: `caltrans-d${padded}-${cctv.index ?? cams.length}`,
+          lat,
+          lng,
+          name: cctv.location?.locationName || 'Caltrans Camera',
+          city: cctv.location?.nearbyPlace || cctv.location?.county || 'California',
+          country: 'US',
+          feed_url: still,
+          stream_url: hls,
+          stream_type: hls ? 'hls' : 'image',
+          source: 'Caltrans',
+        });
       }
-    } catch { /* silent */ }
-  }
-  return allCams;
+      return cams;
+    }),
+  );
+
+  return perDistrict.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
 }
 
 // ── CANADA: Ottawa, Toronto, Montreal, Quebec ──
@@ -108,7 +147,7 @@ async function fetchCanadaCameras(): Promise<any[]> {
         const coords = feature.geometry?.coordinates;
         const p = feature.properties;
         if (!coords || !p || !p.IDEcamera) continue;
-        
+
         cams.push({
           id: `quebec511-${p.IDEcamera}`, lat: coords[1], lng: coords[0],
           name: p.DescriptionLocalisationEn || p.DescriptionLocalisationFr || 'Quebec 511 Camera', city: p.NomRegionDiffusion || 'Quebec', country: 'Canada',
@@ -237,21 +276,9 @@ async function fetchUSEastCameras(): Promise<any[]> {
       source: 'Cincinnati, OH',
     },
   );
-  // Florida 511
-  try {
-    const res = await stealthFetch('https://fl511.com/api/v2/cameras', { signal: AbortSignal.timeout(8000) });
-    if (res.ok) {
-      const data = await res.json();
-      for (const cam of (data || []).slice(0, 800)) {
-        if (!cam.latitude || !cam.longitude) continue;
-        cams.push({
-          id: `fl-${cams.length}`, lat: cam.latitude, lng: cam.longitude,
-          name: cam.description || 'FL-511 Camera', city: 'Florida', country: 'US',
-          feed_url: cam.imageUrl || '', source: 'FL-511',
-        });
-      }
-    }
-  } catch { /* silent */ }
+  // Florida is served by its own region ('florida' -> fetchFl511Cameras) in
+  // ./fl511.ts. The inline call that used to live here hit a documented API
+  // path that now 404s and required a key; the list endpoint needs neither.
 
   return cams.filter((c: any) => c.lat && c.lng);
 }
@@ -314,7 +341,7 @@ async function fetchAsiaCameras(): Promise<any[]> {
 // ── MIDDLE EAST: Israel, Lebanon ──
 async function fetchMiddleEastCameras(): Promise<any[]> {
   const cams: any[] = [];
-  
+
   // Israel Curated (Embedded)
   cams.push(
     {
@@ -360,6 +387,8 @@ const REGION_FETCHERS: Record<string, () => Promise<any[]>> = {
   'uk': fetchTfLCameras,
   'us-west': async () => [...await fetchWSDOTCameras(), ...await fetchCaltransCameras()],
   'us-east': fetchUSEastCameras,
+  'florida': fetchFl511Cameras,
+  'newyork': fetchNy511Cameras,
   'us-central': fetchUSCentralCameras,
   'canada': fetchCanadaCameras,
   'europe': fetchEuropeCameras,
@@ -428,6 +457,12 @@ function getRegionsForBounds(lat: number, lng: number, radius: number): string[]
   if (inSpain) regions.push('spain');
   if (inPoland) regions.push('poland');
 
+  // Florida (FDOT FL511)
+  if (lat > 24.3 && lat < 31.1 && lng > -87.7 && lng < -79.9) regions.push('florida');
+
+  // New York State (511NY)
+  if (lat > 40.4 && lat < 45.1 && lng > -79.9 && lng < -71.8) regions.push('newyork');
+
   // Middle East
   const inMiddleEast = lat > 29 && lat < 34.5 && lng > 34 && lng < 36.5;
   if (inMiddleEast) regions.push('middle-east');
@@ -480,8 +515,8 @@ export async function GET(request: Request) {
       }
     }
 
-    const cacheControl = allCameras.length < 50 
-      ? 'no-store, max-age=0' 
+    const cacheControl = allCameras.length < 50
+      ? 'no-store, max-age=0'
       : 'public, s-maxage=300, stale-while-revalidate=600';
 
     return NextResponse.json({

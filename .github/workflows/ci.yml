@@ -1,0 +1,43 @@
+name: CI
+
+# Gates every PR into master (and direct pushes to master) on a clean install,
+# production build, and the full test suite — which now ends with `tsc --noEmit`.
+# The build step is required, not decorative: tsconfig pulls in the generated
+# next-env.d.ts and .next/types/**, which do not exist on a fresh checkout, so
+# `next build` must run before the typecheck can see the route types. It also
+# gates the standalone Docker build the project ships.
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+# Newer commits on the same ref supersede in-flight runs.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (generates next-env.d.ts + .next/types for the typecheck)
+        run: npm run build
+
+      - name: Test suite (parsers, providers, wiring, + tsc --noEmit gate)
+        run: npm test

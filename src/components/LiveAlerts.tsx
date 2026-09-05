@@ -1,73 +1,210 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  ChevronDown, ChevronUp, MapPin, ExternalLink, AlertTriangle,
-  Newspaper, Clock, Radio, Maximize2, Minimize2
+  ChevronDown, ChevronUp, MapPin, AlertTriangle,
+  Newspaper, Clock, Radio, Maximize2, Minimize2, Search,
+  RefreshCw, PlayCircle, Tv
 } from 'lucide-react';
+import type { LiveFeedMode } from '@/components/LiveStreamPlayer';
 
-interface LiveAlertsProps {
-  data: any;
-  onLocate: (lat: number, lng: number) => void;
-  onWatchFeed?: (url: string, name: string) => void;
+interface LiveFeedOptions {
+  mode?: LiveFeedMode;
+  embedAllowed?: boolean;
 }
 
+interface LiveAlertsProps {
+  data: LiveAlertsData;
+  onLocate: (lat: number, lng: number) => void;
+  onWatchFeed?: (url: string, name: string, options?: LiveFeedOptions) => void;
+}
+
+interface LiveAlertsData {
+  news?: NewsAlertSource[];
+  earthquakes?: EarthquakeSource[];
+}
+
+interface NewsAlertSource {
+  title?: string;
+  description?: string;
+  source?: string;
+  coords?: [number, number] | null;
+  published?: string;
+  risk_score?: number;
+  link?: string;
+}
+
+interface EarthquakeSource {
+  magnitude: number;
+  place: string;
+  lat: number;
+  lng: number;
+  time?: string;
+}
+
+interface AlertItem {
+  type: 'news' | 'quake' | 'feed';
+  title: string;
+  description?: string;
+  source: string;
+  lat?: number;
+  lng?: number;
+  time?: string;
+  severity: 'LOW' | 'MODERATE' | 'ELEVATED' | 'HIGH' | 'CRITICAL';
+  url?: string;
+  feedUrl?: string;
+  category?: string;
+}
+
+interface IptvCountry {
+  name: string;
+  code: string;
+  languages: string[];
+  flag: string;
+}
+
+interface IptvChannel {
+  id: string;
+  name: string;
+  countryCode: string;
+  logo?: string;
+  group: string;
+  streamUrl: string;
+  streamType: LiveFeedMode;
+  source: 'iptv-org';
+  sourceUrl: string;
+}
+
+// Severity encoding — identical in both themes so red always means critical.
 const RISK_COLORS: Record<string, string> = {
-  HIGH: '#FF3D3D',
-  CRITICAL: '#FF1744',
-  ELEVATED: '#FF9500',
-  MODERATE: '#FFD700',
-  LOW: '#00E676',
+  HIGH: 'var(--severity-high)',
+  CRITICAL: 'var(--severity-critical)',
+  ELEVATED: 'var(--severity-elevated)',
+  MODERATE: 'var(--severity-elevated)',
+  LOW: 'var(--severity-nominal)',
 };
+
+const BUILTIN_FEEDS = [
+  { name: 'NBC News NOW', city: 'New York', country: 'US', lat: 40.759, lng: -73.980, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCeY0bbntWzzVIaj2z3QigXg&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
+  { name: 'CBS News 24/7', city: 'New York', country: 'US', lat: 40.764, lng: -73.973, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC8p1vwvWtl6T73JiExfWs1g&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
+  { name: 'ABC News Live', city: 'New York', country: 'US', lat: 40.763, lng: -73.979, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCBi2mrWuNuyYy4gbM6fU18Q&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
+  { name: 'Bloomberg TV', city: 'New York', country: 'US', lat: 40.756, lng: -73.988, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC_vQ72b7v5n2938v9d5c80w&autoplay=1&mute=1', category: 'finance', region: 'americas' },
+  { name: 'C-SPAN', city: 'Washington DC', country: 'US', lat: 38.897, lng: -77.036, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCb--64Gl51jIEVE-GLDAVTg&autoplay=1&mute=1', category: 'government', region: 'americas' },
+  { name: 'CBC News', city: 'Toronto', country: 'CA', lat: 43.644, lng: -79.387, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCKy1dAqELon0zgzZPOz9SVw&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
+  { name: 'Sky News', city: 'London', country: 'GB', lat: 51.500, lng: -0.118, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCoMdktPbSTixAyNGwb-UYkQ&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
+  { name: 'France 24 EN', city: 'Paris', country: 'FR', lat: 48.830, lng: 2.280, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCQfwfsi5VrQ8yKZ-UWmAEFg&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
+  { name: 'DW News', city: 'Berlin', country: 'DE', lat: 52.508, lng: 13.376, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCknLrEdhRCp1aegoMqRaCZg&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
+  { name: 'Euronews', city: 'Lyon', country: 'FR', lat: 45.764, lng: 4.836, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCtUbOIRGKZkW7555n6x6q6g&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
+  { name: 'TRT World', city: 'Istanbul', country: 'TR', lat: 41.008, lng: 28.978, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC7fWeaHZQg1p9-4v98L1D1A&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
+  { name: 'UKRINFORM', city: 'Kyiv', country: 'UA', lat: 50.450, lng: 30.523, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCaDkCK6iFHPE0lmpaYL-WxQ&autoplay=1&mute=1', category: 'conflict', region: 'europe' },
+  { name: 'Al Jazeera EN', city: 'Doha', country: 'QA', lat: 25.286, lng: 51.534, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCNye-wNBqNL5ZzHSJj3l8Bg&autoplay=1&mute=1', category: 'mainstream', region: 'middleeast' },
+  { name: 'Al Mayadeen', city: 'Beirut', country: 'LB', lat: 33.8886, lng: 35.4955, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCZCFHCU-2eGF7V5ciMkoPHw&autoplay=1&mute=1', category: 'conflict', region: 'middleeast' },
+  { name: 'LBCI Lebanon', city: 'Beirut', country: 'LB', lat: 33.8930, lng: 35.5018, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCpE6gpKewomi17XDyPfpFjA&autoplay=1&mute=1', category: 'mainstream', region: 'middleeast' },
+  { name: 'NHK World', city: 'Tokyo', country: 'JP', lat: 35.690, lng: 139.692, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCSPEjw8F2nQDtmUKPFNF7_A&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
+  { name: 'CNA 24/7', city: 'Singapore', country: 'SG', lat: 1.290, lng: 103.852, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC83jt4dlz1Gjl58fzQrrKZg&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
+  { name: 'WION', city: 'New Delhi', country: 'IN', lat: 28.614, lng: 77.209, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC_gUM8rL-Lrg6O3adPW9K1g&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
+  { name: 'Arirang', city: 'Seoul', country: 'KR', lat: 37.566, lng: 126.978, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCw9-5Y1CjW7Qy1Yf5q1y2-Q&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
+  { name: 'ABC AU', city: 'Sydney', country: 'AU', lat: -33.868, lng: 151.209, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC5iLnYoF4Ryb63YdGD9RfWQ&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
+  { name: 'Africanews', city: 'Pointe-Noire', country: 'CG', lat: -4.778, lng: 11.865, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC5T2fB_W0Z31T0c8yN36a8A&autoplay=1&mute=1', category: 'mainstream', region: 'africa' },
+  { name: 'SABC News', city: 'Johannesburg', country: 'ZA', lat: -26.204, lng: 28.047, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC8yH-uI81UUtEMDsowQyx1g&autoplay=1&mute=1', category: 'mainstream', region: 'africa' },
+  { name: 'teleSUR EN', city: 'Caracas', country: 'VE', lat: 10.491, lng: -66.902, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCmuTmpLY35O3csvhyA6vrkg&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
+];
+
+function getDefaultCountry(): string {
+  if (typeof navigator === 'undefined') return 'US';
+  const locales = navigator.languages?.length ? navigator.languages : [navigator.language];
+  for (const locale of locales) {
+    const region = locale.split('-')[1]?.toUpperCase();
+    if (/^[A-Z]{2}$/.test(region || '')) return region;
+  }
+  return 'US';
+}
+
+function decodeAlertText(value: string): string {
+  return value
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>');
+}
 
 export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsProps) {
   const [expanded, setExpanded] = useState(true);
   const [maximized, setMaximized] = useState(false);
   const [filter, setFilter] = useState<'all' | 'news' | 'quakes' | 'feeds'>('all');
+  const [mounted, setMounted] = useState(false);
+  const [iptvCountries, setIptvCountries] = useState<IptvCountry[]>([]);
+  const [iptvCountry, setIptvCountry] = useState(getDefaultCountry);
+  const [iptvChannels, setIptvChannels] = useState<IptvChannel[]>([]);
+  const [iptvSearch, setIptvSearch] = useState('');
+  const [iptvLoading, setIptvLoading] = useState(false);
+  const [iptvRefreshing, setIptvRefreshing] = useState(false);
+  const [iptvError, setIptvError] = useState<string | null>(null);
+  const [iptvUpdatedAt, setIptvUpdatedAt] = useState<string | null>(null);
+  const loadedCountryRef = useRef<string | null>(null);
 
-  // Built-in live feeds — verified video IDs (synced with /api/live-news)
-  const BUILTIN_FEEDS = [
-    // ── North America ──
-    { name: 'NBC News NOW', city: 'New York', country: 'US', lat: 40.759, lng: -73.980, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCeY0bbntWzzVIaj2z3QigXg&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
-    { name: 'CBS News 24/7', city: 'New York', country: 'US', lat: 40.764, lng: -73.973, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC8p1vwvWtl6T73JiExfWs1g&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
-    { name: 'ABC News Live', city: 'New York', country: 'US', lat: 40.763, lng: -73.979, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCBi2mrWuNuyYy4gbM6fU18Q&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
-    { name: 'Bloomberg TV', city: 'New York', country: 'US', lat: 40.756, lng: -73.988, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC_vQ72b7v5n2938v9d5c80w&autoplay=1&mute=1', category: 'finance', region: 'americas' },
-    { name: 'C-SPAN', city: 'Washington DC', country: 'US', lat: 38.897, lng: -77.036, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCb--64Gl51jIEVE-GLDAVTg&autoplay=1&mute=1', category: 'government', region: 'americas' },
-    { name: 'CBC News', city: 'Toronto', country: 'CA', lat: 43.644, lng: -79.387, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCKy1dAqELon0zgzZPOz9SVw&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
-    // ── Europe ──
-    { name: 'Sky News', city: 'London', country: 'GB', lat: 51.500, lng: -0.118, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCoMdktPbSTixAyNGwb-UYkQ&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
-    { name: 'France 24 EN', city: 'Paris', country: 'FR', lat: 48.830, lng: 2.280, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCQfwfsi5VrQ8yKZ-UWmAEFg&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
-    { name: 'DW News', city: 'Berlin', country: 'DE', lat: 52.508, lng: 13.376, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCknLrEdhRCp1aegoMqRaCZg&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
-    { name: 'Euronews', city: 'Lyon', country: 'FR', lat: 45.764, lng: 4.836, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCtUbOIRGKZkW7555n6x6q6g&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
-    { name: 'TRT World', city: 'Istanbul', country: 'TR', lat: 41.008, lng: 28.978, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC7fWeaHZQg1p9-4v98L1D1A&autoplay=1&mute=1', category: 'mainstream', region: 'europe' },
-    { name: 'UKRINFORM', city: 'Kyiv', country: 'UA', lat: 50.450, lng: 30.523, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCaDkCK6iFHPE0lmpaYL-WxQ&autoplay=1&mute=1', category: 'conflict', region: 'europe' },
-    // ── Middle East ──
-    { name: 'Al Jazeera EN', city: 'Doha', country: 'QA', lat: 25.286, lng: 51.534, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCNye-wNBqNL5ZzHSJj3l8Bg&autoplay=1&mute=1', category: 'mainstream', region: 'middleeast' },
-    { name: 'Al Mayadeen', city: 'Beirut', country: 'LB', lat: 33.8886, lng: 35.4955, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCZCFHCU-2eGF7V5ciMkoPHw&autoplay=1&mute=1', category: 'conflict', region: 'middleeast' },
-    { name: 'LBCI Lebanon', city: 'Beirut', country: 'LB', lat: 33.8930, lng: 35.5018, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCpE6gpKewomi17XDyPfpFjA&autoplay=1&mute=1', category: 'mainstream', region: 'middleeast' },
-    // ── Asia Pacific ──
-    { name: 'NHK World', city: 'Tokyo', country: 'JP', lat: 35.690, lng: 139.692, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCSPEjw8F2nQDtmUKPFNF7_A&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
-    { name: 'CNA 24/7', city: 'Singapore', country: 'SG', lat: 1.290, lng: 103.852, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC83jt4dlz1Gjl58fzQrrKZg&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
-    { name: 'WION', city: 'New Delhi', country: 'IN', lat: 28.614, lng: 77.209, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC_gUM8rL-Lrg6O3adPW9K1g&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
-    { name: 'Arirang', city: 'Seoul', country: 'KR', lat: 37.566, lng: 126.978, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCw9-5Y1CjW7Qy1Yf5q1y2-Q&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
-    { name: 'ABC AU', city: 'Sydney', country: 'AU', lat: -33.868, lng: 151.209, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC5iLnYoF4Ryb63YdGD9RfWQ&autoplay=1&mute=1', category: 'mainstream', region: 'asia' },
-    // ── Africa ──
-    { name: 'Africanews', city: 'Pointe-Noire', country: 'CG', lat: -4.778, lng: 11.865, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC5T2fB_W0Z31T0c8yN36a8A&autoplay=1&mute=1', category: 'mainstream', region: 'africa' },
-    { name: 'SABC News', city: 'Johannesburg', country: 'ZA', lat: -26.204, lng: 28.047, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UC8yH-uI81UUtEMDsowQyx1g&autoplay=1&mute=1', category: 'mainstream', region: 'africa' },
-    // ── Latin America ──
-    { name: 'teleSUR EN', city: 'Caracas', country: 'VE', lat: 10.491, lng: -66.902, url: 'https://www.youtube-nocookie.com/embed/live_stream?channel=UCmuTmpLY35O3csvhyA6vrkg&autoplay=1&mute=1', category: 'mainstream', region: 'americas' },
-  ];
+  useEffect(() => {
+    const id = window.setTimeout(() => setMounted(true), 0);
+    return () => window.clearTimeout(id);
+  }, []);
 
-  // Build unified alert feed
-  const alerts: any[] = [];
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/iptv/countries', { cache: 'no-store' })
+      .then((res) => res.ok ? res.json() : Promise.reject(new Error(`countries ${res.status}`)))
+      .then((payload) => {
+        if (cancelled) return;
+        const countries = Array.isArray(payload.countries) ? payload.countries : [];
+        setIptvCountries(countries);
+        if (!countries.some((country: IptvCountry) => country.code === iptvCountry)) {
+          setIptvCountry(countries.some((country: IptvCountry) => country.code === 'US') ? 'US' : countries[0]?.code || 'US');
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) setIptvError(error instanceof Error ? error.message : 'Unable to load IPTV countries');
+      });
+    return () => { cancelled = true; };
+  }, [iptvCountry]);
 
-  // OSINT Telegram News Feed (from /api/news)
+  const loadIptvChannels = useCallback(async (country: string, refresh = false) => {
+    if (!refresh && loadedCountryRef.current === country) return;
+    setIptvError(null);
+    setIptvLoading(!refresh);
+    setIptvRefreshing(refresh);
+    try {
+      const res = await fetch(`/api/iptv/channels?country=${encodeURIComponent(country)}${refresh ? '&refresh=1' : ''}`, { cache: 'no-store' });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload.error || `channels ${res.status}`);
+      setIptvChannels(Array.isArray(payload.channels) ? payload.channels : []);
+      setIptvUpdatedAt(payload.timestamp || new Date().toISOString());
+      loadedCountryRef.current = country;
+      if (payload.warning) setIptvError(payload.warning);
+    } catch (error) {
+      setIptvChannels([]);
+      setIptvError(error instanceof Error ? error.message : 'Unable to load IPTV channels');
+    } finally {
+      setIptvLoading(false);
+      setIptvRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (filter !== 'feeds') return;
+    const id = window.setTimeout(() => {
+      void loadIptvChannels(iptvCountry);
+    }, 0);
+    return () => window.clearTimeout(id);
+  }, [filter, iptvCountry, loadIptvChannels]);
+
+  const alerts: AlertItem[] = [];
+
   if (data.news) {
-    data.news.forEach((a: any) => {
+    data.news.forEach((a) => {
       alerts.push({
-        type: 'news', title: a.title, description: a.description, source: a.source,
+        type: 'news', title: a.title || 'Untitled alert', description: a.description, source: a.source || 'OSINT',
         lat: a.coords?.[0], lng: a.coords?.[1], time: a.published,
         severity: (a.risk_score ?? 1) >= 8 ? 'CRITICAL' : (a.risk_score ?? 1) >= 6 ? 'HIGH' : (a.risk_score ?? 1) >= 4 ? 'ELEVATED' : 'LOW',
         url: a.link,
@@ -75,9 +212,8 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
     });
   }
 
-  // Earthquakes
   if (data.earthquakes) {
-    data.earthquakes.slice(0, 5).forEach((eq: any) => {
+    data.earthquakes.slice(0, 5).forEach((eq) => {
       alerts.push({
         type: 'quake', title: `M${eq.magnitude} - ${eq.place}`, source: 'USGS',
         lat: eq.lat, lng: eq.lng, time: eq.time,
@@ -86,7 +222,6 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
     });
   }
 
-  // Built-in live feeds (always present)
   BUILTIN_FEEDS.forEach(f => {
     alerts.push({
       type: 'feed', title: f.name,
@@ -101,6 +236,15 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
     filter === 'quakes' ? alerts.filter(a => a.type === 'quake') :
     alerts.filter(a => a.type === 'feed');
 
+  const filteredIptvChannels = useMemo(() => {
+    const q = iptvSearch.trim().toLowerCase();
+    if (!q) return iptvChannels;
+    return iptvChannels.filter((channel) => `${channel.name} ${channel.group}`.toLowerCase().includes(q));
+  }, [iptvChannels, iptvSearch]);
+
+  const selectedCountry = iptvCountries.find((country) => country.code === iptvCountry);
+  const totalFeedCount = BUILTIN_FEEDS.length + iptvChannels.length;
+
   const getIcon = (type: string) => {
     switch (type) {
       case 'news': return Newspaper;
@@ -110,18 +254,13 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
     }
   };
 
-  // Ensure portal only renders on client
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
-
   const content = (
     <motion.div
       initial={{ opacity: 0, x: 20 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: 0.5, duration: 0.6 }}
-      className={`glass-panel flex flex-col overflow-hidden pointer-events-auto transition-all duration-300 ${maximized ? 'fixed inset-4 z-[9999] bg-[#0a0a09]/95 backdrop-blur-3xl' : 'shrink-0 h-[500px] max-h-[80vh] resize-y'}`}
+      className={`glass-panel flex flex-col overflow-hidden pointer-events-auto transition-all duration-300 ${maximized ? 'fixed inset-4 z-[9999] bg-[var(--surface-0)]/95 backdrop-blur-3xl' : 'shrink-0 h-[500px] max-h-[80vh] resize-y'}`}
     >
-      {/* Header - Fixed Height, Never Shrinks */}
       <div
         onClick={() => setExpanded(!expanded)}
         role="button"
@@ -132,10 +271,10 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
           <Radio className="w-3.5 h-3.5 text-[#FF4081]" />
           <span className="hud-text text-[10px] text-[var(--text-primary)]">LIVE ALERTS</span>
           <span className="gotham-tag gotham-tag--high" style={{ fontSize: '7px', padding: '1px 5px' }}>{alerts.filter(a => a.type === 'news' || a.type === 'quake').length}</span>
-          <span className="gotham-tag gotham-tag--info" style={{ fontSize: '7px', padding: '1px 4px' }}>{BUILTIN_FEEDS.length} FEEDS</span>
+          <span className="gotham-tag gotham-tag--info" style={{ fontSize: '7px', padding: '1px 4px' }}>{totalFeedCount} FEEDS</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-[#FF4081] animate-osiris-pulse" />
+          <div className="w-1.5 h-1.5 rounded-full bg-[#FF4081] animate-sentra-pulse" />
           <button onClick={(e) => { e.stopPropagation(); setMaximized(!maximized); if (!expanded && !maximized) setExpanded(true); }} className="hover:text-white transition-colors" title={maximized ? "Restore" : "Maximize"}>
             {maximized ? <Minimize2 className="w-3 h-3 text-[var(--text-muted)]" /> : <Maximize2 className="w-3 h-3 text-[var(--text-muted)]" />}
           </button>
@@ -150,90 +289,206 @@ export default function LiveAlerts({ data, onLocate, onWatchFeed }: LiveAlertsPr
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className={`flex flex-col flex-1 min-h-0 ${maximized ? 'bg-[#0a0a09]' : 'bg-transparent'}`}
+            className={`flex flex-col flex-1 min-h-0 ${maximized ? 'bg-[var(--surface-0)]' : 'bg-transparent'}`}
           >
-            {/* Filters - Fixed Height, Never Shrinks */}
-            <div className={`flex-shrink-0 flex gap-1 ${maximized ? 'px-6 py-4 border-b border-[#2A2A28] bg-[#111111]' : 'px-3 py-2 border-b border-[rgba(255,255,255,0.05)]'}`}>
+            <div className={`flex-shrink-0 flex gap-1 ${maximized ? 'px-6 py-4 border-b border-[var(--surface-3)] bg-[var(--surface-1)]' : 'px-3 py-2 border-b border-[rgba(255,255,255,0.05)]'}`}>
               {(['all', 'news', 'quakes', 'feeds'] as const).map(f => (
                 <button
                   key={f}
                   onClick={() => setFilter(f)}
-                  className={`px-3 py-1.5 rounded text-[10px] font-mono tracking-wider transition-all ${filter === f ? 'bg-[var(--cyan-primary)]/20 text-[var(--cyan-primary)] border border-[var(--cyan-primary)]/50' : 'text-[#8A8880] border border-transparent hover:text-[#E8E6E0] hover:bg-[#2A2A28]'}`}
+                  className={`px-3 py-1.5 rounded text-[10px] font-mono tracking-wider transition-all ${filter === f ? 'bg-[var(--cyan-primary)]/20 text-[var(--cyan-primary)] border border-[var(--cyan-primary)]/50' : 'text-[var(--text-dim)] border border-transparent hover:text-[var(--text-primary)] hover:bg-[var(--surface-3)]'}`}
                 >
                   {f.toUpperCase()}
                 </button>
               ))}
             </div>
 
-            {/* Alert List - Internally Scrolling */}
             <div className={`flex-1 overflow-y-auto styled-scrollbar ${maximized ? 'p-6' : 'p-3'}`}>
-              <div className="space-y-2">
-                {filtered.map((alert, i) => {
-                  const Icon = getIcon(alert.type);
-                const sevColor = RISK_COLORS[alert.severity] || '#FFD700';
-                return (
-                  <div
-                    key={i}
-                    onClick={() => {
-                      if (alert.lat !== undefined && alert.lng !== undefined) {
-                        onLocate(alert.lat, alert.lng);
-                      }
-                      if (alert.feedUrl && onWatchFeed) {
-                        onWatchFeed(alert.feedUrl, alert.title);
-                      }
-                    }}
-                    className="w-full text-left p-2.5 rounded-lg bg-[#111111]/60 border border-[#2A2A28] hover:bg-[#1A1A1A] transition-all hover:border-[#3A3A38] group cursor-pointer"
-                  >
-                    <div className="flex items-start gap-2.5">
-                      {/* Severity indicator */}
-                      <div className="flex-shrink-0 mt-1">
-                        <div className="w-2 h-2 rounded-full" style={{ backgroundColor: sevColor, boxShadow: `0 0 6px ${sevColor}60` }} />
+              {filter === 'feeds' ? (
+                <div className="space-y-3">
+                  <div className="rounded-lg bg-[var(--surface-1)]/70 border border-[var(--surface-3)] p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Tv className="w-3.5 h-3.5 text-[#EC407A] flex-shrink-0" />
+                        <span className="text-[10px] font-mono font-bold tracking-widest text-[var(--text-primary)] truncate">IPTV COUNTRY LIST</span>
                       </div>
+                      <span className="text-[8px] font-mono text-[var(--text-dim)]">{iptvChannels.length.toLocaleString()} CHANNELS</span>
+                    </div>
+                    <select
+                      value={iptvCountry}
+                      onChange={(event) => {
+                        loadedCountryRef.current = null;
+                        setIptvChannels([]);
+                        setIptvCountry(event.target.value);
+                      }}
+                      className="w-full bg-black/40 border border-[var(--surface-3)] rounded px-2 py-2 text-[10px] font-mono text-[var(--text-primary)] outline-none focus:border-[var(--cyan-primary)]"
+                    >
+                      {iptvCountries.length === 0 && <option value={iptvCountry}>{iptvCountry}</option>}
+                      {iptvCountries.map((country) => (
+                        <option key={country.code} value={country.code}>
+                          {country.flag ? `${country.flag} ` : ''}{country.name} ({country.code})
+                        </option>
+                      ))}
+                    </select>
+                    <div className="relative">
+                      <Search className="w-3 h-3 text-[var(--text-dim)] absolute left-2 top-1/2 -translate-y-1/2" />
+                      <input
+                        value={iptvSearch}
+                        onChange={(event) => setIptvSearch(event.target.value)}
+                        placeholder="Search channels"
+                        className="w-full bg-black/40 border border-[var(--surface-3)] rounded pl-7 pr-2 py-2 text-[10px] font-mono text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none focus:border-[var(--cyan-primary)]"
+                      />
+                    </div>
+                    {iptvError && (
+                      <div className="text-[9px] font-mono text-amber-300/80 border border-amber-500/20 bg-amber-500/10 rounded px-2 py-1">
+                        {iptvError}
+                      </div>
+                    )}
+                    {iptvUpdatedAt && (
+                      <div className="text-[8px] font-mono text-[var(--text-muted)]">
+                        UPDATED {new Date(iptvUpdatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} {selectedCountry?.name ? `// ${selectedCountry.name}` : ''}
+                      </div>
+                    )}
+                  </div>
 
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start gap-1.5 mb-2">
-                          <Icon className="w-3.5 h-3.5 flex-shrink-0 mt-[2px]" style={{ color: sevColor }} />
-                          <span className={`text-[10px] font-mono text-[#E8E6E0] leading-relaxed ${alert.type === 'news' ? 'line-clamp-3' : 'truncate'}`}>
-                            {(alert.description || alert.title || '').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')}
-                          </span>
+                  <div className="space-y-2">
+                    <div className="text-[9px] font-mono text-[var(--text-dim)] tracking-widest">VERIFIED BROADCAST FEEDS</div>
+                    {BUILTIN_FEEDS.map((feed) => (
+                      <button
+                        key={feed.name}
+                        onClick={() => {
+                          onLocate(feed.lat, feed.lng);
+                          onWatchFeed?.(feed.url, feed.name, { mode: 'iframe', embedAllowed: true });
+                        }}
+                        className="w-full text-left p-2.5 rounded-lg bg-[var(--surface-1)]/60 border border-[var(--surface-3)] hover:bg-[var(--surface-1)] transition-all hover:border-[var(--surface-line)] group"
+                      >
+                        <div className="flex items-center gap-2">
+                          <Radio className="w-3.5 h-3.5 text-[#FF4081] flex-shrink-0" />
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[10px] font-mono text-[var(--text-primary)] truncate">{feed.name}</div>
+                            <div className="text-[8px] font-mono text-[var(--text-dim)] uppercase">{`${feed.city}, ${feed.country} / ${feed.category}`}</div>
+                          </div>
+                          <PlayCircle className="w-3.5 h-3.5 text-[var(--text-dim)] group-hover:text-[var(--cyan-primary)] flex-shrink-0" />
                         </div>
-                        <div className="flex items-center justify-between border-t border-[#2A2A28]/50 pt-1.5 mt-1.5">
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="text-[9px] font-mono text-[var(--text-dim)] tracking-widest">IPTV-ORG COUNTRY CHANNELS</div>
+                    {iptvLoading ? (
+                      <div className="text-center py-6 text-[10px] font-mono text-[var(--text-muted)]">LOADING IPTV CHANNELS...</div>
+                    ) : filteredIptvChannels.length === 0 ? (
+                      <div className="text-center py-6 text-[10px] font-mono text-[var(--text-muted)]">NO IPTV CHANNELS FOUND</div>
+                    ) : (
+                      filteredIptvChannels.map((channel) => (
+                        <button
+                          key={channel.id}
+                          onClick={() => onWatchFeed?.(channel.streamUrl, channel.name, {
+                            mode: channel.streamType,
+                            embedAllowed: channel.streamType !== 'external',
+                          })}
+                          className="w-full text-left p-2.5 rounded-lg bg-[var(--surface-1)]/60 border border-[var(--surface-3)] hover:bg-[var(--surface-1)] transition-all hover:border-[var(--surface-line)] group"
+                        >
                           <div className="flex items-center gap-2">
-                            <span className="text-[9px] font-mono text-[#8A8880] uppercase tracking-wider">{alert.source}</span>
-                            {alert.time && (
-                              <span className="text-[9px] font-mono text-[#5C5A54] flex items-center gap-1 border-l border-[#2A2A28] pl-2">
-                                <Clock className="w-2.5 h-2.5" />
-                                {new Date(alert.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                              </span>
+                            {channel.logo ? (
+                              <div
+                                className="w-7 h-7 rounded bg-black/30 border border-white/5 flex-shrink-0 bg-contain bg-center bg-no-repeat"
+                                style={{ backgroundImage: `url(${channel.logo})` }}
+                              />
+                            ) : (
+                              <div className="w-7 h-7 rounded bg-[#EC407A]/10 border border-[#EC407A]/20 flex items-center justify-center flex-shrink-0">
+                                <Tv className="w-3.5 h-3.5 text-[#EC407A]" />
+                              </div>
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[10px] font-mono text-[var(--text-primary)] truncate">{channel.name}</div>
+                              <div className="text-[8px] font-mono text-[var(--text-dim)] uppercase truncate">{`${channel.group} / ${channel.streamType}`}</div>
+                            </div>
+                            <PlayCircle className="w-3.5 h-3.5 text-[var(--text-dim)] group-hover:text-[var(--cyan-primary)] flex-shrink-0" />
+                          </div>
+                        </button>
+                      ))
+                    )}
+                    <button
+                      onClick={() => loadIptvChannels(iptvCountry, true)}
+                      disabled={iptvRefreshing || iptvLoading}
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-[var(--surface-3)] bg-black/30 text-[9px] font-mono tracking-widest text-[var(--text-primary)] hover:border-[var(--cyan-primary)] hover:text-[var(--cyan-primary)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${iptvRefreshing ? 'animate-spin' : ''}`} />
+                      REFRESH SELECTED COUNTRY
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    {filtered.map((alert, i) => {
+                      const Icon = getIcon(alert.type);
+                      const sevColor = RISK_COLORS[alert.severity] || '#FFD700';
+                      return (
+                        <div
+                          key={i}
+                          onClick={() => {
+                            if (alert.lat !== undefined && alert.lng !== undefined) {
+                              onLocate(alert.lat, alert.lng);
+                            }
+                            if (alert.feedUrl && onWatchFeed) {
+                              onWatchFeed(alert.feedUrl, alert.title, { mode: 'iframe', embedAllowed: true });
+                            }
+                          }}
+                          className="w-full text-left p-2.5 rounded-lg bg-[var(--surface-1)]/60 border border-[var(--surface-3)] hover:bg-[var(--surface-1)] transition-all hover:border-[var(--surface-line)] group cursor-pointer"
+                        >
+                          <div className="flex items-start gap-2.5">
+                            <div className="flex-shrink-0 mt-1">
+                              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: sevColor, boxShadow: `0 0 6px ${sevColor}` }} />
+                            </div>
+
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start gap-1.5 mb-2">
+                                <Icon className="w-3.5 h-3.5 flex-shrink-0 mt-[2px]" style={{ color: sevColor }} />
+                                <span className={`text-[10px] font-mono text-[var(--text-primary)] leading-relaxed ${alert.type === 'news' ? 'line-clamp-3' : 'truncate'}`}>
+                                  {decodeAlertText(alert.description || alert.title || '')}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between border-t border-[var(--surface-3)]/50 pt-1.5 mt-1.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-[9px] font-mono text-[var(--text-dim)] uppercase tracking-wider">{alert.source}</span>
+                                  {alert.time && (
+                                    <span className="text-[9px] font-mono text-[var(--text-muted)] flex items-center gap-1 border-l border-[var(--surface-3)] pl-2">
+                                      <Clock className="w-2.5 h-2.5" />
+                                      {new Date(alert.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                  )}
+                                </div>
+                                {alert.url && (
+                                  <a
+                                    href={alert.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-[8px] font-mono text-[var(--cyan-primary)] hover:underline"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    SOURCE
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+
+                            {alert.lat !== undefined && (
+                              <MapPin className="w-3 h-3 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-0.5" />
                             )}
                           </div>
-                          {alert.url && (
-                            <a 
-                              href={alert.url} 
-                              target="_blank" 
-                              rel="noopener noreferrer" 
-                              className="text-[8px] font-mono text-[var(--cyan-primary)] hover:underline"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              SOURCE
-                            </a>
-                          )}
                         </div>
-                      </div>
-
-                      {/* Fly-to icon */}
-                      {alert.lat !== undefined && (
-                        <MapPin className="w-3 h-3 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-0.5" />
-                      )}
-                    </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-              </div>
-              {filtered.length === 0 && (
-                <div className="text-center py-4 text-[10px] font-mono text-[var(--text-muted)]">
-                  No alerts for this filter
-                </div>
+                  {filtered.length === 0 && (
+                    <div className="text-center py-4 text-[10px] font-mono text-[var(--text-muted)]">
+                      No alerts for this filter
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </motion.div>

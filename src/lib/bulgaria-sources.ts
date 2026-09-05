@@ -1,5 +1,5 @@
 /**
- * Balkans-focused data sources for OSIRIS.
+ * Balkans-focused data sources for Sentra Mi8.
  * NIGGG-BAS (seismic), GDACS (EU civil protection), BG news feeds.
  */
 

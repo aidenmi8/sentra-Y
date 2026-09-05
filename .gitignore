@@ -9,6 +9,7 @@
 
 # Next.js
 /.next/
+/.next-verify/
 /out/
 
 # Production
@@ -27,6 +28,10 @@ yarn-error.log*
 .env*.local
 .env
 
+# Runtime provider credential overrides written by the admin surface
+/config/providers.local.json
+/config/providers.local.json.tmp
+
 # Vercel
 .vercel
 
@@ -44,3 +49,7 @@ scanner_backend_backup.js
 # Security - Prevent accidental manual leaks
 *Manual*.md
 
+# Local evidence store (journalist source material — never commit).
+# Root-anchored on purpose: a bare "evidence/" also matches app code like
+# src/app/api/dr/evidence/ and silently drops those routes from commits.
+/evidence/

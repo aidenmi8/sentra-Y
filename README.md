@@ -1,11 +1,10 @@
 <div align="center">
 
-# ⬡ OSIRIS
+# ⬡ Sentra Mi8
 
 ### Open Source Intelligence & Reconnaissance Integrated System
 
-[![Live Demo](https://img.shields.io/badge/osirisai.live-00E5FF?style=for-the-badge&logo=vercel&logoColor=white)](https://osirislive.app)
-[![Support OSIRIS](https://img.shields.io/badge/Support_Project-Patreon-FF424D?style=for-the-badge&logo=patreon&logoColor=white)](https://www.patreon.com/posts/159077425)
+[![Local Docker](https://img.shields.io/badge/localhost-3005-00E5FF?style=for-the-badge&logo=docker&logoColor=white)](http://localhost:3005)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black?style=for-the-badge&logo=next.js)](https://nextjs.org)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=for-the-badge&logo=typescript&logoColor=white)](https://typescriptlang.org)
 [![MapLibre](https://img.shields.io/badge/MapLibre_GL-GPU_Rendered-396CB2?style=for-the-badge)](https://maplibre.org)
@@ -13,7 +12,7 @@
 
 **A real-time global intelligence dashboard that aggregates live flight tracking, CCTV networks, earthquake monitoring, conflict zone mapping, and 24/7 news feeds into a single GPU-accelerated interface.**
 
-[Live Demo](https://osirisai.live) · [Report Bug](https://github.com/simplifaisoul/osiris/issues) · [Request Feature](https://github.com/simplifaisoul/osiris/issues) · [Join Discord](https://discord.gg/umBykEpb98)
+[Local Docker](http://localhost:3005) · [Report Bug](https://github.com/aidenmi8/sentra-Y/issues) · [Request Feature](https://github.com/aidenmi8/sentra-Y/issues)
 
 </div>
 
@@ -21,20 +20,20 @@
 
 ## Overview
 
-Osiris is a production-grade OSINT platform that provides situational awareness across multiple intelligence domains. Built with Next.js 16 and MapLibre GL, every data point is rendered via WebGL for 60fps performance even with thousands of concurrent entities on-screen.
+Sentra Mi8 is a production-grade OSINT platform that provides situational awareness across multiple intelligence domains. Built with Next.js 16 and MapLibre GL, every data point is rendered via WebGL for 60fps performance even with thousands of concurrent entities on-screen.
 
 ### Key Capabilities
 
 | Domain | Data Points | Sources |
 |--------|------------|---------|
-| **Aviation** | Commercial, Private, Military, Jets | OpenSky Network |
-| **Maritime** | 39 Global Ports, 10 Chokepoints | Static Naval Intel |
+| **Aviation** | Commercial, Private, Military, Jets | OpenSky primary, adsb.lol fallback |
+| **Maritime** | 39 Global Ports, 10 Chokepoints, optional live AIS | Static Naval Intel, aisstream.io |
 | **CCTV** | 2,000+ Cameras | TfL, WSDOT, Caltrans, NYC DOT, VicRoads + more |
 | **Seismic** | Real-time M2.5+ | USGS Earthquake API |
 | **Fires** | Active Hotspots | NASA FIRMS |
-| **News** | 24/7 Live Streams | 25+ Global Broadcasters |
+| **News** | 24/7 Live Streams, IPTV Country Lists | Global Broadcasters, iptv-org |
 | **Weather** | Severe Events | NASA EONET |
-| **Space** | Solar Weather, Satellites | NOAA SWPC, N2YO |
+| **Space** | Solar Weather, Satellites | NOAA SWPC, public TLE feeds |
 | **Cyber** | CVE Threats, Vulnerability Scanning | NVD, Custom Scanner |
 | **Conflict** | 13 Active Zones | Static OSINT Intel |
 | **Crypto** | BTC + ETH Wallet Tracing, OFAC SDN Match | blockstream.info, Blockscout, OpenSanctions |
@@ -47,7 +46,7 @@ Osiris is a production-grade OSINT platform that provides situational awareness 
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                  OSIRIS CLIENT                   │
+│                  Sentra Mi8 CLIENT                   │
 │  ┌──────────┐  ┌──────────┐  ┌───────────────┐ │
 │  │ MapLibre  │  │  HUD     │  │  RECON Toolkit│ │
 │  │  GL (GPU) │  │ Panels   │  │  Port Scan    │ │
@@ -61,13 +60,14 @@ Osiris is a production-grade OSINT platform that provides situational awareness 
 │  /api/fires           /api/maritime             │
 │  /api/gdelt           /api/satellites           │
 │  /api/weather         /api/scanner              │
-│  /api/sentinel        /api/telegram-feed        │
+│  /api/provider-health /api/iptv/*               │
+│  /api/sentinel        /api/sdk/*                │
 │  /api/osint/*  (whois, dns, ip, cve, sanctions, │
 │                 crypto, sweep, threats, …)      │
 ├─────────────────────────────────────────────────┤
 │              EXTERNAL DATA SOURCES               │
-│  OpenSky · USGS · NASA · NOAA · TfL · NVD      │
-│  GDACS · EONET · FIRMS · N2YO · RSS Feeds      │
+│  OpenSky · adsb.lol · USGS · NASA · NOAA · NVD │
+│  GDACS · EONET · FIRMS · RSS Feeds · iptv-org  │
 │  blockstream.info · Blockscout · OpenSanctions  │
 │  t.me public previews                            │
 └─────────────────────────────────────────────────┘
@@ -97,10 +97,12 @@ Osiris is a production-grade OSINT platform that provides situational awareness 
 - **25+ live 24/7 news streams** from global broadcasters
 - Click any news dot on the map to open the live stream
 - Feeds from NBC, CBS, ABC, Sky News, Al Jazeera, France 24, NHK, WION, and more
+- **IPTV country lists** from [iptv-org](https://github.com/iptv-org/iptv), searchable by country with manual selected-country refresh
+- Sentra Mi8 links to public IPTV streams directly; it does not host or proxy video
 
 ### Telegram OSINT Layer
 - **Public-channel feed** scraped from the unauthenticated `t.me/s/<channel>` web preview — no Bot API token, no MTProto
-- Default curated set of 5 channels (EN + RU/UA war reporting), overridable via `OSIRIS_TELEGRAM_CHANNELS`
+- Default curated set of 4 public channels, overridable via `SENTRA_MI8_TELEGRAM_CHANNELS`
 - Posts are geoparsed against a multilingual place dictionary (EN + Cyrillic + Arabic) and plotted on the map
 - Click any cyan dot to read the post and jump to the original on Telegram
 
@@ -132,8 +134,8 @@ Osiris is a production-grade OSINT platform that provides situational awareness 
 ## Quick Start
 
 ```bash
-git clone https://github.com/simplifaisoul/osiris.git
-cd osiris
+git clone https://github.com/aidenmi8/sentra-Y.git
+cd sentra-Y
 npm install
 npm run dev
 ```
@@ -142,9 +144,32 @@ Open [http://localhost:3000](http://localhost:3000)
 
 ### Docker / Self-Hosting
 
+For a laptop-local build that does not depend on the full CasaOS stack, use the
+single-container compose file:
+
 ```bash
-git clone https://github.com/simplifaisoul/osiris.git
-cd osiris
+git clone https://github.com/aidenmi8/sentra-Y.git
+cd sentra-Y
+cp .env.template .env     # optional — configure keys / scanner backend
+docker compose -f docker-compose.local.yml up -d --build
+curl -fsS http://localhost:3005/api/health
+curl -fsS http://localhost:3005/api/provider-health
+```
+
+Open [http://localhost:3005](http://localhost:3005). The local container is
+named `sentra-mi8-local` and the image is tagged `sentra-mi8:local`.
+To use another host port, set `LOCAL_SENTRA_MI8_PORT`, for example:
+
+```bash
+LOCAL_SENTRA_MI8_PORT=3010 docker compose -f docker-compose.local.yml up -d --build
+```
+
+The default `docker-compose.yml` is still available for the broader
+self-hosting/CasaOS stack.
+
+```bash
+git clone https://github.com/aidenmi8/sentra-Y.git
+cd sentra-Y
 cp .env.template .env     # optional — configure keys / port
 docker compose up -d
 ```
@@ -155,42 +180,55 @@ carries CasaOS app metadata (`x-casaos:`) for one-click install on
 [CasaOS](https://casaos.io). See **[DOCKER.md](DOCKER.md)** for the full Docker,
 CasaOS and API-key guide.
 
-**Prebuilt image (GHCR)** — skip the build and pull it directly:
+**Plain Docker image** — build the same standalone image without Compose:
 
 ```bash
-docker pull ghcr.io/aiacos/osiris:latest
-docker run -d -p 3000:3000 --env-file .env ghcr.io/aiacos/osiris:latest
+docker build -t sentra-mi8:latest .
+docker run -d --name sentra-mi8 -p 3000:3000 --env-file .env --restart unless-stopped sentra-mi8:latest
 ```
 
-**Custom port** — the container always listens on `3000`; set `OSIRIS_PORT` in
-`.env` to change the published host port (e.g. `OSIRIS_PORT=3005`) without
+**Custom port** — the container always listens on `3000`; set `SENTRA_MI8_PORT` in
+`.env` to change the published host port (e.g. `SENTRA_MI8_PORT=3005`) without
 editing the compose file.
 
 ### Environment Variables
 
-OSIRIS works **partially without any API keys** — all core feeds use public,
-keyless sources. Copy [`.env.template`](.env.template) to `.env` and set only
-what you need:
+Sentra Mi8 runs its core feeds without third-party API keys. Copy
+[`.env.template`](.env.template) to `.env` and set only what you need:
 
 ```env
 # Published host port (container always listens on 3000). Default: 3000
-OSIRIS_PORT=3000
+SENTRA_MI8_PORT=3000
 
-# RECON scanner backend (the only vars the current code reads).
-# SCANNER_KEY must match the backend's OSIRIS_KEY — generate with: openssl rand -hex 32
+# AI analyst / briefing
+GEMINI_API_KEY_1=
+
+# RECON scanner backend
 SCANNER_URL=
 SCANNER_KEY=
 
-# Optional, for higher rate limits / future sources (see DOCKER.md for signup links)
-FIRMS_API_KEY=                # NASA FIRMS  — firms.modaps.eosdis.nasa.gov/api/map_key/
-OPENSKY_CLIENT_ID=            # OpenSky OAuth2 (since Mar 2025) — opensky-network.org
-OPENSKY_CLIENT_SECRET=
-N2YO_API_KEY=                 # N2YO satellites — n2yo.com (Profile → API key)
-AIS_API_KEY=                 # aisstream.io maritime
+# Live maritime AIS
+AIS_API_KEY=
+
+# Optional write/webhook/analytics integrations
+SDK_INGEST_KEY=
+GITHUB_WEBHOOK_SECRET=
+GITHUB_WEBHOOK_FORWARD_URL=
+UMAMI_ENDPOINT=
+UMAMI_WEBSITE_ID=
+
+# Optional runtime/feed overrides
+SENTRA_MI8_INTEL_URL=
+SENTRA_MI8_TELEGRAM_CHANNELS=OSINTtechnical,Faytuks,Liveuamap,CyberKnow
+IPTV_ORG_BASE_URL=
 ```
 
-> Without `SCANNER_URL`/`SCANNER_KEY` the RECON toolkit returns `503`; every
-> other layer works out of the box. `.env` is gitignored — only the template is committed.
+Use `curl http://localhost:3005/api/provider-health` to see redacted runtime
+configuration status. `/api/flights` uses OpenSky OAuth credentials as the
+primary aviation source when `OPENSKY_CLIENT_ID` and `OPENSKY_CLIENT_SECRET` are
+set, and falls back to keyless `adsb.lol` when OpenSky is unavailable, empty, or
+rate-limited. N2YO and keyed FIRMS variables remain planned/reserved. `.env` is
+gitignored — only the template is committed.
 
 ---
 
@@ -228,18 +266,8 @@ MIT — see [LICENSE](LICENSE) for details.
 
 <div align="center">
 
-**🛠️ SUPPORT THE OSIRIS PROJECT**
-The OSIRIS Global Intelligence Grid is entirely open-source, but running the backend scanners and data firehoses isn't cheap.
+**Sentra Mi8**
 
-If you want to help keep the servers alive, and support us to get access to better tools  unlock the **Special OSIRIS Console**, Currently Just a Cool UI. a you can officially support the project here : 
-
-🔗 [Support OSIRIS on Patreon](https://www.patreon.com/posts/159077425)
-
-*Supporters receive the `🔴 RedTeam Console` role and access to encrypted developer comms.*
-
-
-**Built by [simplifaisoul](https://github.com/simplifaisoul)**
-
-[Join our Discord to be a part of this movement!](https://discord.gg/umBykEpb98)
+Local-first OSINT dashboard for authorized intelligence and reconnaissance workflows.
 
 </div>

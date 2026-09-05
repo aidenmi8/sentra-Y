@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 // Share the entity store with the stream endpoint
 const globalForSDK = globalThis as unknown as {
-  sdkEntityStore: Map<string, any>;
+  sdkEntityStore: Map<string, unknown>;
   sdkLastUpdate: number;
   sdkIngestLog: Array<{ source: string; count: number; timestamp: string }>;
 };
@@ -28,11 +28,7 @@ if (!globalForSDK.sdkIngestLog) {
   globalForSDK.sdkIngestLog = [];
 }
 
-// Simple API key validation (in production, use proper auth)
-const VALID_KEYS = new Set([
-  process.env.SDK_INGEST_KEY || 'polybolos-dev-key',
-  'lattice-integration-key',
-]);
+const SDK_INGEST_KEY = process.env.SDK_INGEST_KEY?.trim() || '';
 
 export async function POST(request: NextRequest) {
   try {
@@ -48,8 +44,17 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
+    if (!SDK_INGEST_KEY) {
+      return NextResponse.json({
+        accepted: 0,
+        rejected: 0,
+        errors: ['SDK ingest is not configured. Set SDK_INGEST_KEY to enable writes.'],
+        timestamp: new Date().toISOString(),
+      }, { status: 503 });
+    }
+
     // Validate API key
-    if (!VALID_KEYS.has(body.apiKey)) {
+    if (body.apiKey !== SDK_INGEST_KEY) {
       return NextResponse.json({
         accepted: 0,
         rejected: 0,

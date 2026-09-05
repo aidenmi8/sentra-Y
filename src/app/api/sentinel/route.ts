@@ -24,7 +24,7 @@ export async function GET(req: Request) {
 
     // Source 1: Element84 Earth Search v1
     try {
-      const res = await fetch('https://earth-search.aws.element84.com/v1/search', { 
+      const res = await fetch('https://earth-search.aws.element84.com/v1/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: AbortSignal.timeout(12000),
@@ -42,12 +42,12 @@ export async function GET(req: Request) {
         total = data.numberMatched || scenes.length;
         source = 'element84';
       }
-    } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); }
+    } catch (e) { console.warn('[Sentra Mi8] Suppressed error:', e instanceof Error ? e.message : e); }
 
     // Source 2: Try sentinel-2 if sentinel-1 is empty
     if (scenes.length === 0) {
       try {
-        const res = await fetch('https://earth-search.aws.element84.com/v1/search', { 
+        const res = await fetch('https://earth-search.aws.element84.com/v1/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal: AbortSignal.timeout(12000),
@@ -65,13 +65,13 @@ export async function GET(req: Request) {
           total = data.numberMatched || scenes.length;
           source = 'element84-s2';
         }
-      } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); }
+      } catch (e) { console.warn('[Sentra Mi8] Suppressed error:', e instanceof Error ? e.message : e); }
     }
 
     // Source 3: Copernicus STAC fallback
     if (scenes.length === 0) {
       try {
-        const fallbackRes = await fetch('https://catalogue.dataspace.copernicus.eu/stac/search', { 
+        const fallbackRes = await fetch('https://catalogue.dataspace.copernicus.eu/stac/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           signal: AbortSignal.timeout(12000),
@@ -88,7 +88,7 @@ export async function GET(req: Request) {
           total = data.numberMatched || scenes.length;
           source = 'copernicus';
         }
-      } catch (e) { console.warn('[OSIRIS] Suppressed error:', e instanceof Error ? e.message : e); }
+      } catch (e) { console.warn('[Sentra Mi8] Suppressed error:', e instanceof Error ? e.message : e); }
     }
 
     return NextResponse.json({

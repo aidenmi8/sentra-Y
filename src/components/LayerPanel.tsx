@@ -5,8 +5,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Plane, Satellite, Activity, Sun, AlertTriangle, Camera, Flame, Target,
   CloudLightning, Radiation, Tv, Anchor, Ship, Newspaper,
-  Network, Share2, Radio
+  Network, Share2, Radio, Cable, KeyRound
 } from 'lucide-react';
+
+interface LayerGroup {
+  label: string;
+  fullLabel: string;
+  color: string;
+  layers: Array<{ key: string; label: string; icon: any; color: string; dataKey: string }>;
+  /** Status key shown alongside the toggle; `unsourced` marks a state no feed reports. */
+  legend?: Array<{ label: string; color: string; unsourced?: boolean }>;
+}
 
 interface LayerPanelProps {
   data: any;
@@ -15,9 +24,11 @@ interface LayerPanelProps {
   isMobile?: boolean;
   theme?: 'core' | 'ghost';
   setTheme?: (theme: 'core' | 'ghost') => void;
+  /** True when the provider admin surface is enabled and served over loopback. */
+  adminAvailable?: boolean;
 }
 
-const getLayerGroups = (theme: 'core' | 'ghost') => {
+const getLayerGroups = (theme: 'core' | 'ghost'): LayerGroup[] => {
   const isGhost = theme === 'ghost';
   const phantomPurple = '#B388FF';
   const ghostPriv = '#CE93D8';
@@ -30,11 +41,24 @@ const getLayerGroups = (theme: 'core' | 'ghost') => {
 
   return [
   {
+    label: 'SUBSEA',
+    fullLabel: 'SUBSEA CABLE NETWORK',
+    color: '#26C6DA',
+    layers: [
+      { key: 'cables', label: 'Fibre-Optic Cables', icon: Cable, color: '#26C6DA', dataKey: 'submarine_cables' },
+    ],
+    legend: [
+      { label: 'Operational', color: '#26C6DA' },
+      { label: 'Under construction', color: '#F9A825' },
+      { label: 'Planned', color: '#7E57C2' },
+      { label: 'Not operational', color: '#D32F2F', unsourced: true },
+    ],
+  },
+  {
     label: 'SDK',
-    fullLabel: 'OSIRIS SDK',
+    fullLabel: 'SENTRA MI8 SDK',
     color: '#1565C0',
     layers: [
-      { key: 'sdk_sea', label: 'Maritime Lines', icon: Anchor, color: '#4FC3F7', dataKey: 'sdk_entities' },
       { key: 'sdk_ransomware', label: 'Ransomware Feed', icon: AlertTriangle, color: '#D32F2F', dataKey: 'sdk_entities' },
     ],
   },
@@ -43,7 +67,7 @@ const getLayerGroups = (theme: 'core' | 'ghost') => {
     fullLabel: 'AVIATION',
     color: flightCom,
     layers: [
-      { key: 'flights', label: 'Commercial', icon: Plane, color: flightCom, dataKey: 'commercial_flights' },
+      { key: 'flights', label: 'All aircraft', icon: Plane, color: flightCom, dataKey: 'commercial_flights,private_flights,private_jets,military_flights' },
       { key: 'private', label: 'Private', icon: Plane, color: flightPriv, dataKey: 'private_flights' },
       { key: 'jets', label: 'Private Jets', icon: Plane, color: flightGov, dataKey: 'private_jets' },
       { key: 'military', label: 'Military', icon: Shield, color: flightMil, dataKey: 'military_flights' },
@@ -84,6 +108,7 @@ const getLayerGroups = (theme: 'core' | 'ghost') => {
     layers: [
       { key: 'infrastructure', label: 'Nuclear Facilities', icon: Radiation, color: '#26A69A', dataKey: 'infrastructure' },
       { key: 'global_incidents', label: 'Global Incidents', icon: AlertTriangle, color: '#D32F2F', dataKey: 'gdelt' },
+      { key: 'conflict_zones', label: 'Conflict Regions', icon: Target, color: '#E65100', dataKey: '' },
       { key: 'gps_jamming', label: 'GPS Jamming', icon: Radio, color: '#D32F2F', dataKey: 'gps_jamming' },
     ],
   },
@@ -116,14 +141,14 @@ function Shield(props: any) {
   );
 }
 
-function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'core', setTheme }: LayerPanelProps) {
+function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'core', setTheme, adminAvailable = false }: LayerPanelProps) {
   const [hoveredGroup, setHoveredGroup] = useState<string | null>(null);
 
   const LAYER_GROUPS = getLayerGroups(theme);
   const ALL_LAYERS = LAYER_GROUPS.flatMap(g => g.layers);
 
   const toggle = (key: string) => setActiveLayers((prev: any) => ({ ...prev, [key]: !prev[key] }));
-  
+
   const getCount = (dk: string): number | null => {
     if (!dk) return null;
     let total = 0;
@@ -142,7 +167,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
       <div className="flex flex-col gap-4 py-2">
         {LAYER_GROUPS.map((group) => (
           <div key={group.label} className="flex flex-col gap-2">
-            <div 
+            <div
               className="text-[10px] font-bold font-mono tracking-widest border-b border-white/10 pb-1"
               style={{ color: group.color }}
             >
@@ -152,7 +177,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
               {group.layers.map((layer) => {
                 const isLayerActive = activeLayers[layer.key];
                 const count = getCount(layer.dataKey);
-                
+
                 return (
                   <button
                     key={layer.key}
@@ -164,12 +189,12 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
                       }
                     }}
                     className={`flex items-center gap-2 px-2 py-2 rounded border transition-colors ${
-                      isLayerActive 
-                        ? 'bg-white/10 border-white/20' 
+                      isLayerActive
+                        ? 'bg-white/10 border-white/20'
                         : 'bg-transparent border-white/5 hover:border-white/10'
                     }`}
                   >
-                    <div 
+                    <div
                       className={`w-2 h-2 rounded-full border flex-shrink-0 transition-all ${
                         isLayerActive ? 'bg-current border-current scale-100' : 'bg-transparent border-white/30 scale-75'
                       }`}
@@ -187,6 +212,24 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
                 );
               })}
             </div>
+            {group.legend && (
+              <div className="flex flex-wrap gap-x-3 gap-y-1 px-1">
+                {group.legend.map((entry) => (
+                  <div key={entry.label} className="flex items-center gap-1.5">
+                    <span
+                      className="w-3 h-[2px] flex-shrink-0 rounded-full"
+                      style={{ backgroundColor: entry.color, opacity: entry.unsourced ? 0.35 : 1 }}
+                    />
+                    <span
+                      className="text-[8px] font-mono uppercase tracking-wider"
+                      style={{ color: entry.unsourced ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.7)' }}
+                    >
+                      {entry.label}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         ))}
 
@@ -205,7 +248,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
                 boxShadow: theme === 'ghost' ? '0 0 15px rgba(179, 136, 255, 0.3), inset 0 0 8px rgba(179, 136, 255, 0.2)' : 'inset 0 0 5px rgba(0,0,0,0.5)'
               }}
             >
-              <motion.div 
+              <motion.div
                 layout
                 className="w-4 h-4 rounded-full"
                 style={{
@@ -219,19 +262,33 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
           </div>
         )}
 
+        {/* The desktop KEYS link lives in the top status bar, which is hidden
+            below 768px — this is the mobile route to the same page. */}
+        {adminAvailable && (
+          <a
+            href="/admin/providers"
+            className="flex items-center justify-between mt-2 pt-4 border-t border-[var(--border-primary)] px-2 pb-2"
+          >
+            <span className="text-[10px] font-bold font-mono tracking-widest text-[var(--text-secondary)]">
+              PROVIDER KEYS
+            </span>
+            <KeyRound className="w-4 h-4 text-[var(--gold-primary)]" />
+          </a>
+        )}
+
       </div>
     );
   }
 
   return (
-    <motion.div 
+    <motion.div
       initial={{ x: -100, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-      className="absolute top-0 left-0 h-full w-[80px] border-r border-[var(--border-primary)] flex flex-col pt-32 pb-8 z-50 pointer-events-auto bg-[var(--bg-panel)] backdrop-blur-[24px] saturate-150"
-      style={{ boxShadow: '4px 0 24px rgba(0,0,0,0.5)' }}
+      className="absolute top-0 left-0 h-full w-[80px] border-r border-[var(--border-primary)] flex flex-col pt-32 pb-8 pointer-events-auto bg-[var(--bg-panel)] backdrop-blur-[24px] saturate-150"
+      style={{ zIndex: 'var(--z-rail)', boxShadow: '4px 0 24px rgba(0,0,0,0.5)' }}
     >
-      
+
       <div className="flex-1 flex flex-col gap-8 px-2">
         {LAYER_GROUPS.map((group) => {
           const groupActiveCount = group.layers.filter(l => activeLayers[l.key]).length;
@@ -239,14 +296,14 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
           const isHovered = hoveredGroup === group.label;
 
           return (
-            <div 
-              key={group.label} 
+            <div
+              key={group.label}
               className="relative flex justify-center items-center"
               onMouseEnter={() => setHoveredGroup(group.label)}
               onMouseLeave={() => setHoveredGroup(null)}
             >
               {/* The Vertical Label */}
-              <div 
+              <div
                 className={`text-[10px] font-mono font-bold cursor-pointer select-none transition-all duration-300 flex items-center justify-center`}
                 style={{
                   writingMode: 'horizontal-tb',
@@ -258,7 +315,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
               >
                 {/* Active Indicator dot */}
                 {isActive && (
-                  <div 
+                  <div
                     className="absolute -left-1 w-1 h-1 rounded-full animate-pulse"
                     style={{ backgroundColor: group.color, boxShadow: `0 0 8px ${group.color}` }}
                   />
@@ -287,7 +344,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
                         const isLayerActive = activeLayers[layer.key];
                         const count = getCount(layer.dataKey);
                         const Icon = layer.icon || Shield;
-                        
+
                         return (
                           <button
                             key={layer.key}
@@ -300,7 +357,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
                             }}
                             className="w-full flex items-center gap-3 px-2 py-1.5 rounded bg-transparent hover:bg-white/5 transition-colors group"
                           >
-                            <div 
+                            <div
                               className={`w-2 h-2 rounded-full border flex-shrink-0 transition-all duration-300 ${isLayerActive ? 'bg-current border-current scale-100' : 'bg-transparent border-white/30 scale-75'}`}
                               style={{ color: isLayerActive ? layer.color : 'inherit', boxShadow: isLayerActive ? `0 0 8px ${layer.color}` : 'none' }}
                             />
@@ -316,6 +373,27 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
                         );
                       })}
                     </div>
+                    {group.legend && (
+                      <div className="mt-3 pt-2 border-t border-white/10 flex flex-col gap-1">
+                        {group.legend.map((entry) => (
+                          <div key={entry.label} className="flex items-center gap-2">
+                            <span
+                              className="w-3 h-[2px] flex-shrink-0 rounded-full"
+                              style={{ backgroundColor: entry.color, opacity: entry.unsourced ? 0.35 : 1 }}
+                            />
+                            <span
+                              className="text-[9px] font-mono uppercase tracking-wider"
+                              style={{ color: entry.unsourced ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.7)' }}
+                            >
+                              {entry.label}
+                            </span>
+                            {entry.unsourced && (
+                              <span className="text-[8px] font-mono text-white/30 tracking-wider">NO OPEN FEED</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -337,7 +415,7 @@ function LayerPanel({ data, activeLayers, setActiveLayers, isMobile, theme = 'co
               boxShadow: theme === 'ghost' ? '0 0 15px rgba(179, 136, 255, 0.3), inset 0 0 8px rgba(179, 136, 255, 0.2)' : 'inset 0 0 5px rgba(0,0,0,0.5)'
             }}
           >
-            <motion.div 
+            <motion.div
               layout
               className="w-5 h-5 rounded-full"
               style={{
