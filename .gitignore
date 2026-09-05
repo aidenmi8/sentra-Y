@@ -49,6 +49,7 @@ scanner_backend_backup.js
 # Security - Prevent accidental manual leaks
 *Manual*.md
 
-# Local evidence store (journalist source material — never commit)
-/evidence
-evidence/
+# Local evidence store (journalist source material — never commit).
+# Root-anchored on purpose: a bare "evidence/" also matches app code like
+# src/app/api/dr/evidence/ and silently drops those routes from commits.
+/evidence/
