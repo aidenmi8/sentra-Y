@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { safeFetch } from '@/lib/ssrf-guard';
-import { appendEvidence } from '@/lib/dr-media/evidence';
+import { appendEvidence, readLedger, summarizeChange } from '@/lib/dr-media/evidence';
 import { guardEvidenceRequest } from '@/lib/dr-media/evidence-guard';
 
 export const dynamic = 'force-dynamic';
@@ -90,6 +90,11 @@ export async function POST(request: Request) {
   }
 
   const finalUrl = (res as Response & { url?: string }).url || requestedUrl;
+
+  // Snapshot the ledger BEFORE appending so the change summary compares this
+  // capture against what already existed — not against itself. appendEvidence is
+  // synchronous, so nothing else can interleave a write between these two calls.
+  const priorRecords = readLedger();
   const record = appendEvidence({
     kind: typeof kind === 'string' && kind ? kind : 'news-article',
     requested_url: requestedUrl,
@@ -99,6 +104,7 @@ export async function POST(request: Request) {
     body: buf,
     title: typeof (body as { title?: unknown })?.title === 'string' ? (body as { title: string }).title : undefined,
   });
+  const change = summarizeChange(requestedUrl, record.content_sha256, priorRecords);
 
   return NextResponse.json(
     {
@@ -109,6 +115,7 @@ export async function POST(request: Request) {
       content_bytes: record.content_bytes,
       record_sha256: record.record_sha256,
       http_status: record.http_status,
+      change,
     },
     { headers: { 'Cache-Control': 'no-store' } },
   );

@@ -431,6 +431,67 @@ export async function anchorHead(
   return { ...head, receipt };
 }
 
+/* ── Change detection ──────────────────────────────────────────────────────
+ * Re-capturing a URL is how a reporter proves a silent edit or a quiet
+ * un-publish. It needs no new storage: writeBlob dedupes identical bytes, so two
+ * captures of the same URL share a content_sha256 when unchanged and differ when
+ * the outlet altered the page. These are pure reads over the ledger — nothing
+ * derived is written back into the immutable record. Matching is on requested_url
+ * (the stable input), not source_url (which can vary by redirect).
+ * ─────────────────────────────────────────────────────────────────────────── */
+
+export interface CaptureHistoryEntry {
+  seq: number;
+  captured_at: string;
+  content_sha256: string;
+  content_bytes: number;
+  changed_from_prev: boolean; // false for the first capture of the URL
+}
+
+export interface ChangeSummary {
+  first_capture: boolean;
+  changed: boolean | null;    // null on a first capture — nothing was checked
+  capture_count: number;
+  prior?: { seq: number; captured_at: string; content_sha256: string };
+}
+
+/** Every capture of `url`, oldest first, each flagged if its bytes differ from the prior one. */
+export function captureHistoryForUrl(url: string, records: EvidenceRecord[] = readLedger()): CaptureHistoryEntry[] {
+  const entries: CaptureHistoryEntry[] = [];
+  let prevHash: string | null = null;
+  for (const r of records) {
+    if (r.requested_url !== url) continue;
+    entries.push({
+      seq: r.seq,
+      captured_at: r.captured_at,
+      content_sha256: r.content_sha256,
+      content_bytes: r.content_bytes,
+      changed_from_prev: prevHash !== null && prevHash !== r.content_sha256,
+    });
+    prevHash = r.content_sha256;
+  }
+  return entries;
+}
+
+/**
+ * Summarizes what a freshly captured `newContentSha256` means for `url`, given the
+ * records that existed BEFORE it was appended. First capture ⇒ changed:null (there
+ * was nothing to compare against — never reported as "unchanged").
+ */
+export function summarizeChange(url: string, newContentSha256: string, priorRecords: EvidenceRecord[] = readLedger()): ChangeSummary {
+  const priors = priorRecords.filter((r) => r.requested_url === url);
+  if (priors.length === 0) {
+    return { first_capture: true, changed: null, capture_count: 1 };
+  }
+  const prior = priors[priors.length - 1];
+  return {
+    first_capture: false,
+    changed: prior.content_sha256 !== newContentSha256,
+    capture_count: priors.length + 1,
+    prior: { seq: prior.seq, captured_at: prior.captured_at, content_sha256: prior.content_sha256 },
+  };
+}
+
 export function resetEvidenceForTests(dir?: string): void {
   // Tests point SENTRA_EVIDENCE_DIR at a temp dir; nothing to do here beyond doc.
   void dir;

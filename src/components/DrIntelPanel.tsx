@@ -27,6 +27,17 @@ interface DrSource {
   status?: number;
 }
 
+interface CaptureChange {
+  first_capture: boolean;
+  changed: boolean | null; // null on a first capture — nothing was compared
+  capture_count: number;
+  prior?: { seq: number; captured_at: string; content_sha256: string };
+}
+
+// The latest capture result for an item. Re-capture overwrites it, so the badge
+// always reflects the most recent snapshot, not the first.
+type CaptureState = { seq: number; hash: string; change: CaptureChange } | 'pending' | 'error';
+
 interface DrIntelPanelProps {
   /** True when the evidence surface is reachable (loopback + flag). */
   evidenceAvailable?: boolean;
@@ -43,7 +54,7 @@ export default function DrIntelPanel({ evidenceAvailable = false, onClose }: DrI
   const [items, setItems] = useState<DrNewsItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [captured, setCaptured] = useState<Record<string, { seq: number; hash: string } | 'pending' | 'error'>>({});
+  const [captured, setCaptured] = useState<Record<string, CaptureState>>({});
   const [notice, setNotice] = useState<string | null>(null);
   const [sources, setSources] = useState<DrSource[]>([]);
 
@@ -75,8 +86,16 @@ export default function DrIntelPanel({ evidenceAvailable = false, onClose }: DrI
       });
       const body = await res.json();
       if (!res.ok || !body.captured) throw new Error(body.error || `HTTP ${res.status}`);
-      setCaptured((c) => ({ ...c, [item.id]: { seq: body.seq, hash: body.content_sha256 } }));
-      setNotice(`Captured #${body.seq} · sha256 ${String(body.content_sha256).slice(0, 12)}…`);
+      const change: CaptureChange = body.change ?? { first_capture: true, changed: null, capture_count: 1 };
+      setCaptured((c) => ({ ...c, [item.id]: { seq: body.seq, hash: body.content_sha256, change } }));
+      const short = String(body.content_sha256).slice(0, 12);
+      if (change.first_capture) {
+        setNotice(`Captured #${body.seq} · first snapshot · sha256 ${short}…`);
+      } else if (change.changed) {
+        setNotice(`Captured #${body.seq} · CHANGED since #${change.prior?.seq} · sha256 ${short}…`);
+      } else {
+        setNotice(`Captured #${body.seq} · unchanged since #${change.prior?.seq} · sha256 ${short}…`);
+      }
     } catch (e) {
       setCaptured((c) => ({ ...c, [item.id]: 'error' }));
       setError(e instanceof Error ? e.message : 'Capture failed.');
@@ -181,11 +200,32 @@ export default function DrIntelPanel({ evidenceAvailable = false, onClose }: DrI
                 )}
               </div>
               {evidenceAvailable && (
-                <div className="mt-2 flex items-center gap-2">
+                <div className="mt-2 flex flex-wrap items-center gap-2">
                   {cap && typeof cap === 'object' ? (
-                    <span className="flex items-center gap-1 text-[8px] font-mono text-[var(--alert-green)]">
-                      <ShieldCheck className="w-3 h-3" /> CAPTURED #{cap.seq} · {cap.hash.slice(0, 10)}…
-                    </span>
+                    <>
+                      <span className="flex items-center gap-1 text-[8px] font-mono text-[var(--alert-green)]">
+                        <ShieldCheck className="w-3 h-3" /> CAPTURED #{cap.seq} · {cap.hash.slice(0, 10)}…
+                      </span>
+                      {cap.change.first_capture ? (
+                        <span className="text-[8px] font-mono uppercase tracking-wider text-[var(--text-dim)]" title="First snapshot of this URL — nothing to compare against yet">
+                          first snapshot
+                        </span>
+                      ) : cap.change.changed ? (
+                        <span className="flex items-center gap-1 text-[8px] font-mono uppercase tracking-wider text-[var(--alert-orange)]" title={`Content differs from capture #${cap.change.prior?.seq} — a silent edit or update`}>
+                          <AlertTriangle className="w-2.5 h-2.5" /> changed vs #{cap.change.prior?.seq}
+                        </span>
+                      ) : (
+                        <span className="text-[8px] font-mono uppercase tracking-wider text-[var(--text-muted)]" title={`Identical bytes to capture #${cap.change.prior?.seq}`}>
+                          unchanged vs #{cap.change.prior?.seq}
+                        </span>
+                      )}
+                      <button
+                        onClick={() => capture(item)}
+                        title="Re-capture now to check for a silent edit or un-publish"
+                        className="flex items-center gap-1 text-[8px] font-mono uppercase tracking-wider text-[var(--text-secondary)] hover:text-[var(--gold-primary)] transition-colors">
+                        <RefreshCw className="w-2.5 h-2.5" /> re-capture
+                      </button>
+                    </>
                   ) : (
                     <button
                       onClick={() => capture(item)}
