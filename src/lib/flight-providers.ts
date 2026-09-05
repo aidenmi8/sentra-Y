@@ -61,14 +61,47 @@ interface ProviderOptions {
   timeoutMs?: number;
 }
 
-const REGIONS = [
-  { lat: 39.8, lon: -98.5, dist: 2000 },
-  { lat: 50.0, lon: 15.0, dist: 2000 },
-  { lat: 35.0, lon: 105.0, dist: 2000 },
-  { lat: -25.0, lon: 133.0, dist: 2000 },
-  { lat: 0.0, lon: 20.0, dist: 2500 },
-  { lat: -15.0, lon: -60.0, dist: 2000 },
-];
+/**
+ * adsb.lol circle queries used for enrichment and for the keyless fallback.
+ * Distances are nautical miles. The original six circles left holes over the
+ * Caribbean, North Atlantic tracks, the Pacific, the Middle East, India,
+ * SE Asia, Japan/Korea and Alaska — so a plane like N25315 over Puerto Rico
+ * was on the map (OpenSky) but never got type/registration/nacp.
+ */
+export const ADSB_COVERAGE_REGIONS = [
+  { id: 'conus', lat: 39.8, lon: -98.5, dist: 2000 },
+  { id: 'europe', lat: 50.0, lon: 15.0, dist: 2000 },
+  { id: 'east-asia', lat: 35.0, lon: 105.0, dist: 2000 },
+  { id: 'australia', lat: -25.0, lon: 133.0, dist: 2000 },
+  { id: 'africa', lat: 0.0, lon: 20.0, dist: 2500 },
+  { id: 'south-america', lat: -15.0, lon: -60.0, dist: 2000 },
+  { id: 'caribbean', lat: 18.2, lon: -72.0, dist: 1600 },
+  { id: 'north-atlantic', lat: 48.0, lon: -38.0, dist: 1800 },
+  { id: 'north-pacific', lat: 35.0, lon: -160.0, dist: 2000 },
+  { id: 'middle-east', lat: 27.0, lon: 46.0, dist: 1600 },
+  { id: 'india', lat: 22.0, lon: 78.0, dist: 1600 },
+  { id: 'southeast-asia', lat: 5.0, lon: 115.0, dist: 1600 },
+  { id: 'japan-korea', lat: 36.0, lon: 138.0, dist: 1400 },
+  { id: 'alaska', lat: 64.0, lon: -151.0, dist: 1600 },
+] as const;
+
+const REGIONS = ADSB_COVERAGE_REGIONS;
+const EARTH_RADIUS_NM = 3440.065;
+
+/** True when a lat/lon falls inside an adsb.lol enrichment circle. */
+export function adsbRegionCovers(
+  region: { lat: number; lon: number; dist: number },
+  lat: number,
+  lon: number,
+): boolean {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat - region.lat);
+  const dLon = toRad(lon - region.lon);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRad(region.lat)) * Math.cos(toRad(lat)) * Math.sin(dLon / 2) ** 2;
+  const nm = 2 * EARTH_RADIUS_NM * Math.asin(Math.min(1, Math.sqrt(a)));
+  return nm <= region.dist;
+}
 
 const HELI_TYPES = new Set([
   'R22', 'R44', 'R66', 'B06', 'B06T', 'B204', 'B205', 'B206', 'B212', 'B222', 'B230',
@@ -110,6 +143,8 @@ const COMMERCIAL_TYPES = new Set([
 ]);
 
 const AIRLINE_CODE_RE = /^([A-Z]{3})\d/;
+const US_N_NUMBER_RE = /^N[1-9][A-Z0-9]{0,4}$/;
+const HYPHENATED_REG_RE = /^[A-Z]{1,2}-[A-Z0-9]{3,5}$/;
 /** Military airlift/tanker/medevac callsign prefixes shared by both providers. */
 const MILITARY_CALLSIGN_RE = /^(RCH|KING|DUKE|EVAC|JAKE|REACH|CONVOY)\d/i;
 const JAMMING_NACAP_THRESHOLD = 4;
@@ -321,9 +356,9 @@ export function normalizeOpenSkyState(state: unknown, responseTime: number): Air
     alt: altitude == null ? 0 : Math.round(altitude),
     heading: heading == null ? 0 : Math.round(heading),
     speed_knots: velocity == null ? null : Math.round(velocity * MPS_TO_KNOTS),
-    model: 'Unknown',
+    model: '',
     icao24,
-    registration: 'N/A',
+    registration: inferRegistrationFromCallsign(callsign),
     squawk: String(state[14] || ''),
     airline_code: airlineCode,
     aircraft_category: aircraftCategory,
@@ -435,9 +470,9 @@ function classifyAdsbFlight(f: AdsbAircraft): AircraftRecord | null {
     alt: Math.round(altMeters),
     heading: Math.round(heading),
     speed_knots: speedKnots == null ? null : Math.round(speedKnots * 10) / 10,
-    model: f?.t || 'Unknown',
+    model: f?.t || '',
     icao24: f?.hex || '',
-    registration: f?.r || 'N/A',
+    registration: (typeof f?.r === 'string' && f.r.trim()) || inferRegistrationFromCallsign(callsign),
     squawk: f?.squawk || '',
     airline_code: airlineCode,
     aircraft_category: isHeli ? 'heli' : 'plane',
@@ -564,6 +599,23 @@ async function fetchAdsbUrl(url: string, fetcher: FetchLike, timeoutMs: number):
   return Array.isArray(data?.ac) ? data.ac as AdsbAircraft[] : [];
 }
 
+/** Live per-aircraft lookup so a clicked plane still gets type/reg when it missed the regional index. */
+export async function lookupAdsbAircraftByHex(
+  icao24: string,
+  options: ProviderOptions = {},
+): Promise<AdsbAircraft | null> {
+  const hex = String(icao24 || '').trim().toLowerCase().replace(/[^0-9a-f]/g, '');
+  if (hex.length < 4 || hex.length > 8) return null;
+  const fetcher = options.fetcher ?? fetch;
+  const timeoutMs = options.timeoutMs ?? 8_000;
+  try {
+    const rows = await fetchAdsbUrl(`https://api.adsb.lol/v2/hex/${hex}`, fetcher, timeoutMs);
+    return rows.find((row) => String(row?.hex || '').toLowerCase() === hex) || rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
 function aggregateJamming(points: Array<{ lat: number; lng: number; nac_p: number }>) {
   if (points.length === 0) return [];
   const grid = new Map<string, { lat: number; lng: number; count: number; total_nac_p: number }>();
@@ -590,6 +642,13 @@ function aggregateJamming(points: Array<{ lat: number; lng: number; nac_p: numbe
       severity: Math.round((1 - (zone.total_nac_p / zone.count) / JAMMING_NACAP_THRESHOLD) * 100),
       count: zone.count,
     }));
+}
+
+/** OpenSky leaves registration empty; GA flights usually put the tail number in the callsign. */
+function inferRegistrationFromCallsign(callsign: string): string {
+  const cs = String(callsign || '').trim().toUpperCase().replace(/\s+/g, '');
+  if (US_N_NUMBER_RE.test(cs) || HYPHENATED_REG_RE.test(cs)) return cs;
+  return '';
 }
 
 function extractAirlineCode(callsign: string): string {

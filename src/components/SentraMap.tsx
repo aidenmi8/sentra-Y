@@ -108,6 +108,27 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
     map.addImage(id, { width: size, height: size, data: new Uint8Array(ctx.getImageData(0, 0, size, size).data) });
   }, []);
 
+  const createShipIcon = useCallback((map: maplibregl.Map, id: string, color: string, size: number) => {
+    if (map.hasImage(id)) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    const cx = size / 2, cy = size / 2;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - size * 0.42);
+    ctx.lineTo(cx + size * 0.22, cy + size * 0.08);
+    ctx.lineTo(cx + size * 0.16, cy + size * 0.38);
+    ctx.lineTo(cx - size * 0.16, cy + size * 0.38);
+    ctx.lineTo(cx - size * 0.22, cy + size * 0.08);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#04040A';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    map.addImage(id, { width: size, height: size, data: new Uint8Array(ctx.getImageData(0, 0, size, size).data) });
+  }, []);
+
   const createDot = useCallback((map: maplibregl.Map, id: string, color: string, size: number) => {
     if (map.hasImage(id)) return;
     const canvas = document.createElement('canvas');
@@ -209,7 +230,10 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       createIcon(map, 'plane-green', flightPriv, 24);   
       createIcon(map, 'plane-pink', flightGov, 24);    
       createIcon(map, 'plane-red', flightMil, 24);     
-      createIcon(map, 'plane-grey', isGhost ? phantomPurple : '#546E7A', 24);    
+      createIcon(map, 'plane-grey', isGhost ? phantomPurple : '#546E7A', 24);
+      createShipIcon(map, 'ship-cyan', isGhost ? phantomPurple : '#00E5FF', 22);
+      createShipIcon(map, 'ship-orange', isGhost ? phantomPurple : '#FF9500', 22);
+      createShipIcon(map, 'ship-red', isGhost ? phantomPurple : '#FF3D3D', 22);
       createDot(map, 'dot-gold', isGhost ? phantomPurple : '#D4AF37', 8);
       createDot(map, 'dot-red', isGhost ? phantomPurple : '#D32F2F', 10);
       createDot(map, 'dot-orange', isGhost ? phantomPurple : '#E65100', 10);
@@ -624,28 +648,28 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
         'line-opacity': ['interpolate',['linear'],['zoom'], 1, 0.3, 5, 0.45, 10, 0.7],
       }});
 
-      // Maritime Ships (moving entities) — ocean teal family.
-      // Sized to stay legible at globe zoom: at 2px/0.75 opacity these were
-      // invisible next to the 52 labelled port markers, which is why open-ocean
-      // traffic read as "no ships out there" despite ~20k vessels streaming.
-      map.addLayer({ id: 'ship-halo', type: 'circle', source: 'maritime-ships', paint: {
-        'circle-radius': ['interpolate',['linear'],['zoom'], 1,3.5, 5,7, 10,11],
-        'circle-color': ['match', ['get','type'], 'military','#D32F2F', 'tanker','#E65100', 'cargo','#26C6DA', '#B0BEC5'],
-        'circle-opacity': 0.18,
-        'circle-blur': 0.6,
+      // Maritime ships — circles at globe zoom only. Heading icons take over
+      // at z>=3 so a boat is never drawn on top of its own circle.
+      map.addLayer({ id: 'ship-halo', type: 'circle', source: 'maritime-ships', maxzoom: 3, paint: {
+        'circle-radius': ['interpolate',['linear'],['zoom'], 1,2.6, 3,3.4],
+        'circle-color': ['match', ['get','type'], 'military','#FF3D3D', 'tanker','#FF9500', '#00E5FF'],
+        'circle-opacity': 0.9,
+        'circle-stroke-width': 0.6,
+        'circle-stroke-color': '#041018',
+        'circle-stroke-opacity': 0.85,
       }});
-      map.addLayer({ id: 'ship-dots', type: 'circle', source: 'maritime-ships', paint: {
-        'circle-radius': ['interpolate',['linear'],['zoom'], 1,1.8, 3,2.6, 5,4.5, 10,7],
-        'circle-color': ['match', ['get','type'], 'military','#D32F2F', 'tanker','#E65100', 'cargo','#26C6DA', '#B0BEC5'],
-        'circle-opacity': 0.95,
-        'circle-stroke-width': ['interpolate',['linear'],['zoom'], 1,0.4, 5,0.8],
-        'circle-stroke-color': '#04040A',
-        'circle-stroke-opacity': 0.7,
-      }});
+      map.addLayer({ id: 'ship-dots', type: 'symbol', source: 'maritime-ships', minzoom: 3, layout: {
+        'icon-image': ['match', ['get','type'], 'military', 'ship-red', 'tanker', 'ship-orange', 'ship-cyan'],
+        'icon-size': ['interpolate',['linear'],['zoom'], 3,0.7, 6,0.95, 10,1.15],
+        'icon-rotate': ['get','heading'],
+        'icon-rotation-alignment': 'map',
+        'icon-allow-overlap': true,
+        'icon-ignore-placement': true,
+      }, paint: { 'icon-opacity': 0.92 }});
       map.addLayer({ id: 'ship-label', type: 'symbol', source: 'maritime-ships', minzoom: 5, layout: {
         'text-field': ['get','name'], 'text-size': 9, 'text-font': ['Open Sans Regular'],
         'text-offset': [0, 1.2], 'text-allow-overlap': false,
-      }, paint: { 'text-color': ['match', ['get','type'], 'military','#D32F2F', 'tanker','#E65100', 'cargo','#26C6DA', '#B0BEC5'], 'text-halo-color': '#000', 'text-halo-width': 1 }});
+      }, paint: { 'text-color': ['match', ['get','type'], 'military','#FF3D3D', 'tanker','#FF9500', '#00E5FF'], 'text-halo-color': '#000', 'text-halo-width': 1 }});
 
       setMapReady(true);
     });
@@ -693,7 +717,7 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
      */
     const intelArg = (payload: unknown) => escapeAttr(JSON.stringify(payload));
 
-    // ── Flights (with FlightAware + ADS-B Exchange links) ──
+    // ── Flights — intel panel only (no map popup on top of it) ──
     ['fl-commercial','fl-private','fl-jets','fl-military'].forEach(layer => {
       map.on('click', layer, e => {
         if (!e.features?.length) return;
@@ -725,27 +749,6 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
           source: p.source || 'ADS-B / adsb.lol',
         };
         onEntityClick?.(aircraftEntity);
-        const intelPayload = escapeAttr(JSON.stringify(aircraftEntity));
-        popup(coords, `<div style="${pStyle}border:1px solid rgba(var(--gold-rgb),0.3);">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-            <span style="color:var(--gold-primary);font-size:16px;font-weight:700;letter-spacing:0.1em;">${cs}</span>
-            <span style="color:var(--text-muted);font-size:10px;">${esc(p.icao24 || '')}</span>
-          </div>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:11px;">
-            <div><span style="color:var(--text-muted);font-size:9px;">MODEL</span><br/><span style="color:var(--text-primary);">${esc(p.model || '—')}</span></div>
-            <div><span style="color:var(--text-muted);font-size:9px;">ALT</span><br/><span style="color:var(--cyan-primary);">${p.alt?Math.round(p.alt)+'m':'—'}</span></div>
-            <div><span style="color:var(--text-muted);font-size:9px;">SPEED</span><br/><span style="color:var(--text-primary);">${p.speed_knots||'—'}kt</span></div>
-            <div><span style="color:var(--text-muted);font-size:9px;">HDG</span><br/><span style="color:var(--text-primary);">${Math.round(p.heading||0)}°</span></div>
-            <div><span style="color:var(--text-muted);font-size:9px;">REG</span><br/><span style="color:var(--text-primary);">${esc(p.registration || '—')}</span></div>
-            <div><span style="color:var(--text-muted);font-size:9px;">POS</span><br/><span style="color:var(--text-primary);">${coords[1].toFixed(2)},${coords[0].toFixed(2)}</span></div>
-          </div>
-          <div style="margin-top:12px;display:flex;gap:6px;flex-wrap:wrap;">
-            <a href="https://www.flightaware.com/live/flight/${cs}" target="_blank" style="${linkStyle}color:var(--gold-primary);border:1px solid rgba(var(--gold-rgb),0.4);background:rgba(var(--gold-rgb),0.1);">⚡ FLIGHTAWARE</a>
-            <a href="https://globe.adsbexchange.com/?icao=${esc(p.icao24 || '')}" target="_blank" style="${linkStyle}color:var(--cyan-primary);border:1px solid rgba(var(--cyan-rgb),0.4);background:rgba(var(--cyan-rgb),0.1);">📡 ADS-B</a>
-            <a href="https://www.radarbox.com/data/flights/${cs}" target="_blank" style="${linkStyle}color:#FF69B4;border:1px solid rgba(255,105,180,0.4);background:rgba(255,105,180,0.1);">📍 RADARBOX</a>
-          </div>
-          <button onclick='window.openSentraIntel(${intelPayload})' style="width:100%;margin-top:8px;padding:6px 12px;background:rgba(var(--gold-rgb),0.15);border:1px solid rgba(var(--gold-rgb),0.5);color:var(--gold-primary);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:bold;letter-spacing:0.1em;border-radius:4px;cursor:pointer;">[ DEEP DIVE INTEL ]</button>
-        </div>`);
       });
       map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', layer, () => { map.getCanvas().style.cursor = ''; });
@@ -934,7 +937,7 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
     });
 
     // ── Generic hover for clickables ──
-    ['conflict-icons','cctv-dots','eq-circles','sat-dots','fires-heat','gdelt-dots','weather-dots','infra-dots','maritime-dots','choke-dots','news-dots','sigint-news-dots','balloon-dots','rad-dots','ship-dots','sweep-device-dots','scan-targets-dots','sdk-air','sdk-air-glow','sdk-air-atmo','sdk-intel','sdk-intel-glow','sdk-intel-atmo','malware-dots','cables-line','cables-future','cables-flow'].forEach(layer => {
+    ['conflict-icons','cctv-dots','eq-circles','sat-dots','fires-heat','gdelt-dots','weather-dots','infra-dots','maritime-dots','choke-dots','news-dots','sigint-news-dots','balloon-dots','rad-dots','ship-halo','ship-dots','sweep-device-dots','scan-targets-dots','sdk-air','sdk-air-glow','sdk-air-atmo','sdk-intel','sdk-intel-glow','sdk-intel-atmo','malware-dots','cables-line','cables-future','cables-flow'].forEach(layer => {
       map.on('mouseenter', layer, () => { map.getCanvas().style.cursor = 'pointer'; });
       map.on('mouseleave', layer, () => { map.getCanvas().style.cursor = ''; });
     });
@@ -1016,30 +1019,35 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
       </div>`);
     });
 
-    // ── Maritime Ships ──
-    map.on('click', 'ship-dots', e => {
+    // ── Maritime Ships — intel panel only (no map popup on top of it) ──
+    const onShipClick = (e: any) => {
       if (!e.features?.length) return;
+      const native = e.originalEvent as { _sentraShip?: boolean } | undefined;
+      if (native?._sentraShip) return;
+      if (native) native._sentraShip = true;
       const p = e.features[0].properties as any;
       const coords = (e.features[0].geometry as any).coordinates;
-      const color = p.type === 'military' ? '#FF1744' : p.type === 'tanker' ? '#FF9500' : '#00E5FF';
-      const icon = p.type === 'military' ? '⚔️' : p.type === 'tanker' ? '🛢️' : '🚢';
-      
-      popup(coords, `<div style="${pStyle}border:1px solid ${color}60;box-shadow:inset 0 0 12px ${color}15;">
-        <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid ${color}40;padding-bottom:6px;margin-bottom:8px;">
-          <div style="color:${color};font-size:12px;font-weight:700;letter-spacing:0.1em;">${icon} [ ${(p.type||'VESSEL').toUpperCase()} ]</div>
-          <div style="color:var(--text-muted);font-size:9px;">FLAG: ${esc(p.flag || 'UNK')}</div>
-        </div>
-        <div style="color:var(--text-primary);font-size:11px;font-weight:bold;margin-bottom:10px;">${esc(p.name || 'UNIDENTIFIED VESSEL')}</div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:9px;margin-bottom:8px;background:rgba(0,0,0,0.3);padding:6px;border-radius:4px;">
-          <div><span style="color:var(--text-muted);">SPEED</span><br/><span style="color:${color};font-family:monospace;">${Number(p.speed).toFixed(1)} kn</span></div>
-          <div><span style="color:var(--text-muted);">HEADING</span><br/><span style="color:${color};font-family:monospace;">${Number(p.heading).toFixed(0)}°</span></div>
-          <div><span style="color:var(--text-muted);">LATITUDE</span><br/><span style="color:var(--text-primary);font-family:monospace;">${coords[1].toFixed(4)}°</span></div>
-          <div><span style="color:var(--text-muted);">LONGITUDE</span><br/><span style="color:var(--text-primary);font-family:monospace;">${coords[0].toFixed(4)}°</span></div>
-        </div>
-        <div><span style="color:var(--text-muted);font-size:9px;">DESTINATION: </span><span style="color:var(--text-primary);font-size:9px;">${esc(p.destination || 'UNKNOWN')}</span></div>
-        <a href="https://www.marinetraffic.com/en/ais/details/ships/mmsi:${esc(p.mmsi)}" target="_blank" style="${linkStyle}flex:1;text-align:center;color:${color};border:1px solid ${color}40;background:${color}15;display:inline-block;width:100%;box-sizing:border-box;margin-top:4px;">[ OPEN SOURCE ↗ ]</a>
-      </div>`);
-    });
+      onEntityClick?.({
+        type: 'vessel',
+        shipType: p.type || 'cargo',
+        mmsi: p.mmsi || '',
+        imo: p.imo || '',
+        name: p.name || '',
+        callsign: p.callsign || '',
+        flag: p.flag || '',
+        speed: p.speed,
+        heading: p.heading,
+        destination: p.destination || '',
+        navStatus: p.navStatus || '',
+        eta: p.eta || '',
+        draught: p.draught,
+        lat: coords[1],
+        lng: coords[0],
+        timestamp: p.timestamp || Date.now(),
+      });
+    };
+    map.on('click', 'ship-halo', onShipClick);
+    map.on('click', 'ship-dots', onShipClick);
 
     // ── Weather Events (NASA EONET) ──
     map.on('click', 'weather-dots', e => {
@@ -1238,10 +1246,13 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
         },
       }));
     };
-    setGeo('flights', activeLayers.flights ? toFeatures(data.commercial_flights) : []);
-    setGeo('private-fl', activeLayers.private ? toFeatures(data.private_flights) : []);
-    setGeo('jets', activeLayers.jets ? toFeatures(data.private_jets) : []);
-    setGeo('military', activeLayers.military ? toFeatures(data.military_flights) : []);
+    // `flights` is the all-aircraft master: every category is plotted so a GA
+    // track is not hidden just because it classified as private/jet/military.
+    const showAllAircraft = Boolean(activeLayers.flights);
+    setGeo('flights', showAllAircraft ? toFeatures(data.commercial_flights) : []);
+    setGeo('private-fl', (showAllAircraft || activeLayers.private) ? toFeatures(data.private_flights) : []);
+    setGeo('jets', (showAllAircraft || activeLayers.jets) ? toFeatures(data.private_jets) : []);
+    setGeo('military', (showAllAircraft || activeLayers.military) ? toFeatures(data.military_flights) : []);
   }, [mapReady, data.commercial_flights, data.private_flights, data.private_jets, data.military_flights, activeLayers.flights, activeLayers.private, activeLayers.jets, activeLayers.military]);
 
     // Update aircraft icon colors dynamically on theme switch
@@ -1365,7 +1376,21 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
     if (!mapReady) return;
     setGeo('maritime', activeLayers.maritime && data.maritime_ports ? data.maritime_ports.map((p: any) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lng, p.lat] }, properties: { name: p.name, country: p.country, type: p.type, volume: p.volume, fleet: p.fleet, rank: p.rank } })) : []);
     setGeo('maritime-choke', activeLayers.maritime && data.maritime_chokepoints ? data.maritime_chokepoints.map((c: any) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [c.lng, c.lat] }, properties: { name: c.name, traffic: c.traffic, risk: c.risk } })) : []);
-    setGeo('maritime-ships', activeLayers.maritime && data.maritime_ships ? data.maritime_ships.map((s: any) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [s.lng, s.lat] }, properties: { name: s.name || s.mmsi?.toString(), type: s.type || 'cargo', speed: s.speed, heading: s.heading, destination: s.destination, flag: s.flag } })) : []);
+    setGeo('maritime-ships', activeLayers.maritime && data.maritime_ships ? data.maritime_ships.map((s: any) => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [s.lng, s.lat] }, properties: {
+      name: s.name || String(s.mmsi || ''),
+      type: s.type || 'other',
+      speed: s.speed || 0,
+      heading: s.heading || 0,
+      destination: s.destination || '',
+      flag: s.flag || '',
+      mmsi: s.mmsi || s.id || '',
+      imo: s.imo || '',
+      callsign: s.callsign || '',
+      navStatus: s.navStatus || '',
+      eta: s.eta || '',
+      lat: s.lat,
+      lng: s.lng,
+    } })) : []);
   }, [mapReady, data.maritime_ports, data.maritime_chokepoints, data.maritime_ships, activeLayers.maritime, setGeo]);
 
   useEffect(() => {
@@ -1480,9 +1505,9 @@ function SentraMap({ data, activeLayers, onEntityClick, onMouseCoords, onRightCl
     setVis(['jam-fill','jam-label'], activeLayers.gps_jamming);
     setVis(['day-night-fill'], activeLayers.day_night);
     setVis(['fl-commercial'], activeLayers.flights);
-    setVis(['fl-private'], activeLayers.private);
-    setVis(['fl-jets'], activeLayers.jets);
-    setVis(['fl-military'], activeLayers.military);
+    setVis(['fl-private'], activeLayers.flights || activeLayers.private);
+    setVis(['fl-jets'], activeLayers.flights || activeLayers.jets);
+    setVis(['fl-military'], activeLayers.flights || activeLayers.military);
     setVis(['cctv-glow','cctv-dots','cctv-label'], activeLayers.cctv);
     setVis(['fires-heat'], activeLayers.fires);
     setVis(['weather-glow','weather-dots','weather-label'], activeLayers.weather);

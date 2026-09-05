@@ -42,6 +42,8 @@ assert.equal(byId.get('umami')?.state, 'disabled');
 assert.equal(byId.get('opensky')?.state, 'missing_optional');
 assert.equal(byId.get('adsb-lol')?.state, 'keyless');
 assert.equal(byId.get('submarine-cables')?.state, 'keyless');
+assert.equal(byId.get('dr-news')?.state, 'keyless');
+assert.equal(byId.get('evidence-store')?.state, 'disabled');
 assert.equal(byId.get('osm-surveillance')?.state, 'keyless');
 assert.equal(byId.get('windy-webcams')?.state, 'missing_optional');
 assert.equal(byId.get('n2yo')?.state, 'planned');

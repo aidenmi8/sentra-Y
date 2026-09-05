@@ -9,6 +9,7 @@
 
 # Next.js
 /.next/
+/.next-verify/
 /out/
 
 # Production
@@ -48,3 +49,6 @@ scanner_backend_backup.js
 # Security - Prevent accidental manual leaks
 *Manual*.md
 
+# Local evidence store (journalist source material — never commit)
+/evidence
+evidence/

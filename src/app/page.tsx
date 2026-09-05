@@ -21,6 +21,7 @@ const SentraMap = dynamic(() => import('@/components/SentraMap'), { ssr: false }
 const LayerPanel = dynamic(() => import('@/components/LayerPanel'));
 const CameraViewer = dynamic(() => import('@/components/CameraViewer'));
 const CameraBrowser = dynamic(() => import('@/components/CameraBrowser'));
+const DrIntelPanel = dynamic(() => import('@/components/DrIntelPanel'));
 const OsintPanel = dynamic(() => import('@/components/OsintPanel'));
 const EntityGraphPanel = dynamic(() => import('@/components/EntityGraphPanel'));
 
@@ -147,6 +148,8 @@ export default function Dashboard() {
   const [sentraTheme, setSentraTheme] = useState<'core'|'ghost'>('core');
   const [adminAvailable, setAdminAvailable] = useState(false);
   const [showCameraBrowser, setShowCameraBrowser] = useState(false);
+  const [showDrIntel, setShowDrIntel] = useState(false);
+  const [evidenceAvailable, setEvidenceAvailable] = useState(false);
   const [worldCameras, setWorldCameras] = useState<any[]>([]);
   const [worldCamerasLoading, setWorldCamerasLoading] = useState(false);
   const [worldCamerasError, setWorldCamerasError] = useState<string | null>(null);
@@ -184,7 +187,11 @@ export default function Dashboard() {
   // enabled by flag and served over loopback.
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/admin/status', { cache: 'no-store' })
+    fetch('/api/dr/evidence/status', { cache: 'no-store' })
+      .then(res => res.ok ? res.json() : null)
+      .then(d => { if (d?.available) setEvidenceAvailable(true); })
+      .catch(() => { /* evidence surface absent */ });
+        fetch('/api/admin/status', { cache: 'no-store' })
       .then(res => res.ok ? res.json() : null)
       .then(d => { if (!cancelled && d?.available) setAdminAvailable(true); })
       .catch(() => { /* admin surface absent — link stays hidden */ });
@@ -407,6 +414,32 @@ export default function Dashboard() {
 
   // Entity click handler (hoisted from JSX to comply with Rules of Hooks - Fixes #113)
   const handleEntityClick = useCallback((entity: any) => {
+    if (entity?.type === 'vessel' || entity?.mmsi || entity?.imo) {
+      setEntityGraphTarget({
+        type: 'vessel',
+        id: String(entity.imo || entity.mmsi || entity.name || ''),
+        label: entity.name || entity.imo || entity.mmsi,
+        properties: {
+          mmsi: entity.mmsi,
+          imo: entity.imo,
+          name: entity.name,
+          callsign: entity.callsign,
+          flag: entity.flag,
+          speed: entity.speed,
+          heading: entity.heading,
+          destination: entity.destination,
+          type: entity.shipType || '',
+          navStatus: entity.navStatus,
+          eta: entity.eta,
+          draught: entity.draught,
+          lat: entity.lat,
+          lng: entity.lng,
+          timestamp: entity.timestamp,
+        },
+      });
+      setShowEntityGraph(true);
+      return;
+    }
     if (entity?.type === 'aircraft' || entity?.callsign || entity?.icao24) {
       openAircraftIntel(entity);
       return;
@@ -421,11 +454,32 @@ export default function Dashboard() {
   // Global handler for map popups to manually open the Intel Graph
   useEffect(() => {
     (window as any).openSentraIntel = (entity: any) => {
-      if (entity?.callsign || entity?.icao24) {
-        openAircraftIntel(entity);
-      } else if (entity?.type === 'vessel' || entity?.mmsi || entity?.imo) {
-        setEntityGraphTarget({ type: 'vessel', id: entity.imo || entity.mmsi || entity.name, label: entity.name || entity.imo, properties: { flag: entity.flag, speed: entity.speed, destination: entity.destination } });
+      if (entity?.type === 'vessel' || entity?.mmsi || entity?.imo) {
+        setEntityGraphTarget({
+          type: 'vessel',
+          id: String(entity.imo || entity.mmsi || entity.name || ''),
+          label: entity.name || entity.imo || entity.mmsi,
+          properties: {
+            mmsi: entity.mmsi,
+            imo: entity.imo,
+            name: entity.name,
+            callsign: entity.callsign,
+            flag: entity.flag,
+            speed: entity.speed,
+            heading: entity.heading,
+            destination: entity.destination,
+            type: entity.shipType || '',
+            navStatus: entity.navStatus,
+            eta: entity.eta,
+            draught: entity.draught,
+            lat: entity.lat,
+            lng: entity.lng,
+            timestamp: entity.timestamp,
+          },
+        });
         setShowEntityGraph(true);
+      } else if (entity?.callsign || entity?.icao24) {
+        openAircraftIntel(entity);
       } else if (entity?.type === 'ip' && entity?.ip) {
         setEntityGraphTarget({ type: 'ip', id: entity.ip, label: entity.ip, properties: { threat_type: entity.threat_type, status: entity.status } });
         setShowEntityGraph(true);
@@ -596,7 +650,7 @@ export default function Dashboard() {
       intervals.push(setInterval(() => fetchEndpoint('/api/radiation', d => ({ radiation: d.stations })), 300000)); // 5m
     }
     if (activeLayers.maritime) {
-      intervals.push(setInterval(() => fetchEndpoint('/api/maritime', d => ({ maritime_ports: d.ports, maritime_chokepoints: d.chokepoints, maritime_ships: d.ships })), 10000)); // 10s
+      intervals.push(setInterval(() => fetchEndpoint('/api/maritime', d => ({ maritime_ports: d.ports, maritime_chokepoints: d.chokepoints, maritime_ships: d.ships })), 20000));
     }
     return () => intervals.forEach(clearInterval);
   }, [activeLayers, fetchEndpoint]);
@@ -1074,7 +1128,7 @@ export default function Dashboard() {
             onClick={() => {
               const next = !showCameraBrowser;
               setShowCameraBrowser(next);
-              setShowIntel(false); setShowMarkets(false); setShowAlerts(false); setShowEntityGraph(false);
+              setShowIntel(false); setShowMarkets(false); setShowAlerts(false); setShowEntityGraph(false); setShowDrIntel(false);
               if (next && worldCameras.length === 0) loadWorldCameras();
             }}
             aria-label="Worldwide cameras"
@@ -1111,6 +1165,34 @@ export default function Dashboard() {
                     }
                     openLiveFeed(cam.stream_url, cam.name, { mode: cam.stream_type ?? 'iframe' });
                   }}
+                  onLocate={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <div className="relative group">
+          <button
+            onClick={() => {
+              const next = !showDrIntel;
+              setShowDrIntel(next);
+              setShowIntel(false); setShowMarkets(false); setShowAlerts(false); setShowEntityGraph(false); setShowCameraBrowser(false);
+            }}
+            aria-label="Dominican Republic intel"
+            className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors ${showDrIntel ? 'bg-[var(--gold-primary)]/20' : 'hover:bg-white/10'}`}
+          >
+            <Newspaper className={`w-4 h-4 ${showDrIntel ? 'text-[var(--gold-primary)]' : 'text-white/60'}`} />
+          </button>
+          <AnimatePresence>
+            {showDrIntel && (
+              <motion.div
+                initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}
+                className="absolute right-12 top-1/2 -translate-y-1/2 w-[min(80vw,460px)] h-[80vh] flex"
+              >
+                <DrIntelPanel
+                  evidenceAvailable={evidenceAvailable}
+                  onClose={() => setShowDrIntel(false)}
                   onLocate={(lat, lng) => setFlyToLocation({ lat, lng, ts: Date.now() })}
                 />
               </motion.div>

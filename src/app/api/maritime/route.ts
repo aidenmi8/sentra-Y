@@ -1,12 +1,19 @@
 import { NextResponse } from 'next/server';
 import WebSocket from 'ws';
 import {
+  AIS_FEED_BOXES,
+  AIS_FEED_IDS,
   AIS_SUBSCRIPTION_MESSAGE_TYPES,
+  compactAisShipForMap,
+  evictOverflowMmsis,
   hasValidAisCoordinates,
   mergeAisShipUpdate,
   normalizeAisMessage,
+  type AisFeedId,
   type NormalizedAisShipUpdate,
 } from '@/lib/ais';
+import { getProviderEnv } from '@/lib/provider-config';
+import { registerCacheReset } from '@/lib/cache-registry';
 
 /**
  * Sentra Mi8 — Maritime Intelligence
@@ -90,12 +97,27 @@ const CHOKEPOINTS = [
 // Note: In a true serverless environment, this state would reset per invocation.
 // For Next.js dev server or Node.js Docker container, this will persist.
 
-const globalForAis = globalThis as unknown as {
-  shipsCache: Map<number, CachedAisShip>;
-  isAisConnecting: boolean;
+const MAX_SHIPS = 80_000;
+const STALE_MS = 30 * 60 * 1000;
+const AIS_STREAM_URL = 'wss://stream.aisstream.io/v0/stream';
+
+type AisFeedState = {
+  socket: WebSocket | null;
+  connecting: boolean;
+  reconnectTimer: ReturnType<typeof setTimeout> | null;
+  backoffMs: number;
 };
 
-type CachedAisShip = NormalizedAisShipUpdate & {
+function emptyFeedState(): AisFeedState {
+  return { socket: null, connecting: false, reconnectTimer: null, backoffMs: 1000 };
+}
+
+const globalForAis = globalThis as unknown as {
+  shipsCache: Map<number, CachedAisShip>;
+  aisFeeds: Record<AisFeedId, AisFeedState>;
+};
+
+export type CachedAisShip = NormalizedAisShipUpdate & {
   id: number;
   lat: number;
   lng: number;
@@ -104,115 +126,163 @@ type CachedAisShip = NormalizedAisShipUpdate & {
 
 if (!globalForAis.shipsCache) {
   globalForAis.shipsCache = new Map();
-  globalForAis.isAisConnecting = false;
+}
+if (!globalForAis.aisFeeds) {
+  globalForAis.aisFeeds = {
+    europe: emptyFeedState(),
+    americas: emptyFeedState(),
+    indopacific: emptyFeedState(),
+  };
 }
 
 const shipsCache = globalForAis.shipsCache;
+const aisFeeds = globalForAis.aisFeeds;
 
-function connectAisStream() {
-  if (globalForAis.isAisConnecting) return;
-  const apiKey = process.env.AIS_API_KEY;
+function decodeAisFrame(data: WebSocket.RawData): string {
+  if (Buffer.isBuffer(data)) return data.toString('utf8');
+  if (Array.isArray(data)) return Buffer.concat(data).toString('utf8');
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString('utf8');
+  return String(data);
+}
+
+function pruneShipCache(now = Date.now()) {
+  for (const [mmsi, ship] of shipsCache.entries()) {
+    if (now - ship.timestamp > STALE_MS) shipsCache.delete(mmsi);
+  }
+  if (shipsCache.size <= MAX_SHIPS) return;
+  for (const mmsi of evictOverflowMmsis(shipsCache.values(), MAX_SHIPS)) {
+    shipsCache.delete(mmsi);
+  }
+}
+
+function scheduleAisReconnect(feedId: AisFeedId) {
+  const feed = aisFeeds[feedId];
+  if (feed.reconnectTimer) return;
+  const delay = feed.backoffMs + Math.floor(Math.random() * 400);
+  feed.reconnectTimer = setTimeout(() => {
+    feed.reconnectTimer = null;
+    connectAisFeed(feedId);
+  }, delay);
+  feed.backoffMs = Math.min(60_000, feed.backoffMs * 2);
+}
+
+function disconnectAisFeed(feedId: AisFeedId) {
+  const feed = aisFeeds[feedId];
+  if (feed.reconnectTimer) {
+    clearTimeout(feed.reconnectTimer);
+    feed.reconnectTimer = null;
+  }
+  const ws = feed.socket;
+  feed.socket = null;
+  feed.connecting = false;
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+    try { ws.terminate(); } catch { /* already closed */ }
+  }
+}
+
+function disconnectAisStream() {
+  for (const feedId of AIS_FEED_IDS) disconnectAisFeed(feedId);
+}
+
+function ingestAisFrame(data: WebSocket.RawData) {
+  try {
+    const parsed = JSON.parse(decodeAisFrame(data));
+    if (parsed?.MessageType === 'SubscriptionConfirmation') return;
+    const update = normalizeAisMessage(parsed);
+    if (!update) return;
+
+    const existing = shipsCache.get(update.mmsi);
+    const merged = mergeAisShipUpdate(existing, update);
+    const ship = { id: update.mmsi, ...merged };
+    if (isMappableShip(ship)) shipsCache.set(update.mmsi, ship);
+    if (shipsCache.size > MAX_SHIPS) pruneShipCache();
+  } catch {
+    // ignore parse errors and keep draining the socket
+  }
+}
+
+function connectAisFeed(feedId: AisFeedId) {
+  const feed = aisFeeds[feedId];
+  if (feed.connecting || feed.socket) return;
+  const apiKey = getProviderEnv().AIS_API_KEY;
   if (!apiKey) return;
 
-  globalForAis.isAisConnecting = true;
+  feed.connecting = true;
   let ws: WebSocket;
-
   try {
-    ws = new WebSocket("wss://stream.aisstream.io/v0/stream");
+    ws = new WebSocket(AIS_STREAM_URL, { perMessageDeflate: true });
   } catch {
-    globalForAis.isAisConnecting = false;
+    feed.connecting = false;
+    scheduleAisReconnect(feedId);
     return;
   }
+  feed.socket = ws;
 
-  ws.on("open", () => {
-    globalForAis.isAisConnecting = false;
-    const subscriptionMessage = {
+  const openWatchdog = setTimeout(() => {
+    if (ws.readyState !== WebSocket.OPEN) ws.terminate();
+  }, 8_000);
+
+  ws.on('open', () => {
+    clearTimeout(openWatchdog);
+    feed.connecting = false;
+    feed.backoffMs = 1000;
+    ws.send(JSON.stringify({
       APIKey: apiKey,
-      // Target specific high-value SCM areas to ensure data delivery on free tier
-      BoundingBoxes: [
-        // Tokyo Bay
-        [[34.8, 139.5], [35.7, 140.2]],
-        // Hormuz
-        [[25.0, 54.0], [27.5, 57.5]],
-        // Suez Canal
-        [[27.0, 32.0], [32.0, 33.5]],
-        // Bab el-Mandeb
-        [[12.0, 42.5], [14.0, 44.0]],
-        // Panama Canal
-        [[8.0, -80.5], [10.0, -79.0]],
-        // Malacca / Singapore
-        [[1.0, 103.0], [3.0, 104.5]],
-        // Taiwan Strait
-        [[22.0, 118.0], [26.0, 121.0]],
-        // Rotterdam / English Channel
-        [[50.0, 0.0], [53.0, 5.0]],
-        // US West Coast (LA/LB)
-        [[33.0, -119.0], [34.5, -117.0]],
-        // Global fallback (often heavily sampled by aisstream)
-        [[-90, -180], [90, 180]]
-      ],
-      FilterMessageTypes: AIS_SUBSCRIPTION_MESSAGE_TYPES
-    };
-    ws.send(JSON.stringify(subscriptionMessage));
+      BoundingBoxes: AIS_FEED_BOXES[feedId],
+      FilterMessageTypes: AIS_SUBSCRIPTION_MESSAGE_TYPES,
+    }));
   });
 
-  ws.on("message", (data) => {
-    try {
-      const parsed = JSON.parse(data.toString());
-      const update = normalizeAisMessage(parsed);
-      if (!update) return;
+  ws.on('message', ingestAisFrame);
 
-      const existing = shipsCache.get(update.mmsi);
-      const merged = mergeAisShipUpdate(existing, update);
-      const ship = { id: update.mmsi, ...merged };
-
-      // Return only mappable vessels, but allow static-data updates once a position exists.
-      if (isMappableShip(ship)) {
-        shipsCache.set(update.mmsi, ship);
-      }
-
-      // Limit cache size to prevent memory leak (allow up to 20,000 ships)
-      if (shipsCache.size > 20000) {
-        const firstKey = shipsCache.keys().next().value;
-        if (firstKey) shipsCache.delete(firstKey);
-      }
-    } catch {
-      // ignore parse errors
-    }
+  ws.on('close', () => {
+    clearTimeout(openWatchdog);
+    if (feed.socket === ws) feed.socket = null;
+    feed.connecting = false;
+    scheduleAisReconnect(feedId);
   });
 
-  ws.on("close", () => {
-    globalForAis.isAisConnecting = false;
-    setTimeout(connectAisStream, 5000); // Reconnect
-  });
-
-  ws.on("error", () => {
-    ws.close();
+  ws.on('error', () => {
+    ws.terminate();
   });
 }
 
-// Start connection process asynchronously
+function connectAisStream() {
+  AIS_FEED_IDS.forEach((feedId, index) => {
+    setTimeout(() => connectAisFeed(feedId), index * 300);
+  });
+}
+
+registerCacheReset('maritime', () => {
+  shipsCache.clear();
+  disconnectAisStream();
+  for (const feedId of AIS_FEED_IDS) aisFeeds[feedId].backoffMs = 1000;
+  connectAisStream();
+});
+
 connectAisStream();
 
-// --- SCM Integration: VesselAPI Hybrid Fallback (Satellite AIS) ---
-async function fetchVesselApiFallback() {
-  // Mock data removed per user request. We only rely on real live stream data.
+export function getCachedAisShip(mmsi: number): CachedAisShip | undefined {
+  return shipsCache.get(mmsi);
 }
 
 function isMappableShip(ship: NormalizedAisShipUpdate & { id: number }): ship is CachedAisShip {
   return hasValidAisCoordinates(ship.lat, ship.lng) && typeof ship.timestamp === 'number';
 }
 
-export async function GET() {
-  // Trigger Hybrid Fallback
-  await fetchVesselApiFallback();
+export async function GET(request: Request) {
+  connectAisStream();
+  pruneShipCache();
 
-  // Clean up stale ships (older than 10 minutes)
-  const now = Date.now();
-  for (const [mmsi, ship] of shipsCache.entries()) {
-    if (now - ship.timestamp > 10 * 60 * 1000) {
-      shipsCache.delete(mmsi);
-    }
+  const url = new URL(request.url);
+  const mmsiParam = url.searchParams.get('mmsi');
+  if (mmsiParam) {
+    const mmsi = Number(mmsiParam);
+    const ship = Number.isInteger(mmsi) ? shipsCache.get(mmsi) : undefined;
+    return NextResponse.json(
+      { found: Boolean(ship), ship: ship || null, timestamp: new Date().toISOString() },
+      { headers: { 'Cache-Control': 'no-store' } },
+    );
   }
 
   const ships = Array.from(shipsCache.values());
@@ -307,10 +377,11 @@ export async function GET() {
     };
   });
 
+  const full = url.searchParams.get('full') === '1';
   return NextResponse.json({
     ports: dynamicPorts,
     chokepoints: dynamicChokepoints,
-    ships: ships,
+    ships: full ? ships : ships.map(compactAisShipForMap),
     total_ports: dynamicPorts.length,
     total_chokepoints: dynamicChokepoints.length,
     total_ships: ships.length,

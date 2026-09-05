@@ -69,6 +69,9 @@ export interface AircraftSourceLink {
 
 const DEFAULT_SOURCE = 'ADS-B / adsb.lol';
 const EMPTY_FEED_TIMESTAMP = '';
+const AIRLINE_CALLSIGN_RE = /^[A-Z]{3}\d/;
+const US_N_NUMBER_RE = /^N[1-9][A-Z0-9]{0,4}$/;
+const HYPHENATED_REG_RE = /^[A-Z]{1,2}-[A-Z0-9]{3,5}$/;
 
 function text(value: unknown): string {
   if (typeof value !== 'string') return '';
@@ -91,6 +94,28 @@ function numeric(value: unknown): number | null {
 
 function booleanish(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null;
+}
+
+/**
+ * GA flights often put the tail number in the ADS-B callsign field.
+ * OpenSky then publishes registration as "N/A", so the intel panel would
+ * otherwise show REG -- and the photo lookup would search the hex.
+ */
+export function looksLikeAircraftRegistration(value: unknown): boolean {
+  const v = upper(value).replace(/\s+/g, '');
+  if (!v || v.length < 3 || v.length > 8) return false;
+  if (AIRLINE_CALLSIGN_RE.test(v)) return false;
+  return US_N_NUMBER_RE.test(v) || HYPHENATED_REG_RE.test(v);
+}
+
+export function inferAircraftRegistration(
+  registration?: string | null,
+  callsign?: string | null,
+): string {
+  const fromField = upper(registration);
+  if (fromField) return fromField;
+  const fromCallsign = upper(callsign).replace(/\s+/g, '');
+  return looksLikeAircraftRegistration(fromCallsign) ? fromCallsign : '';
 }
 
 export function collectAircraftFeed(feed: FlightFeed | null | undefined): AircraftTarget[] {
@@ -140,7 +165,7 @@ function snapshotFromAircraft(
   const timestamp = feedTimestamp || text(aircraft.feedTimestamp) || text(aircraft.feed_timestamp) || EMPTY_FEED_TIMESTAMP;
   return {
     callsign: upper(aircraft.callsign),
-    registration: upper(aircraft.registration),
+    registration: inferAircraftRegistration(aircraft.registration, aircraft.callsign),
     icao24: lower(aircraft.icao24),
     model: upper(aircraft.model),
     altitude: numeric(aircraft.altitude) ?? numeric(aircraft.alt),
@@ -158,6 +183,41 @@ function snapshotFromAircraft(
     source: text(aircraft.source) || DEFAULT_SOURCE,
     stale,
     matchKey,
+  };
+}
+
+export function overlayAircraftLookup(
+  snapshot: AircraftSnapshot,
+  lookup: AircraftTarget | null | undefined,
+): AircraftSnapshot {
+  if (!lookup) return snapshot;
+  return {
+    ...snapshot,
+    registration: snapshot.registration || inferAircraftRegistration(lookup.registration, lookup.callsign),
+    model: snapshot.model || upper(lookup.model),
+    squawk: snapshot.squawk || upper(lookup.squawk),
+    nacP: snapshot.nacP ?? numeric(lookup.nacP) ?? numeric(lookup.nac_p),
+    category: snapshot.category || lower(lookup.category),
+    aircraftCategory: snapshot.aircraftCategory || lower(lookup.aircraftCategory) || lower(lookup.aircraft_category),
+  };
+}
+
+export function adsbRecordToLookupTarget(record: {
+  hex?: string;
+  flight?: string;
+  r?: string;
+  t?: string;
+  squawk?: string;
+  nac_p?: number;
+} | null | undefined): AircraftTarget | null {
+  if (!record) return null;
+  return {
+    icao24: record.hex,
+    callsign: record.flight,
+    registration: record.r,
+    model: record.t,
+    squawk: record.squawk,
+    nac_p: record.nac_p,
   };
 }
 

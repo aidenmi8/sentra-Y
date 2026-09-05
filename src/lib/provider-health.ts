@@ -214,6 +214,28 @@ export function buildProviderHealth(env: EnvLike = process.env): ProviderHealthR
       message: 'Keyless secondary aviation fallback used when OpenSky is unavailable, empty, rate-limited, or timed out.',
     },
     {
+      id: 'dr-news',
+      name: 'Dominican Republic News (RSS)',
+      category: 'data',
+      state: 'keyless',
+      required: false,
+      env: [],
+      routes: ['/api/dr/news'],
+      message: 'Keyless DR newspaper RSS (Phase 1: Diario Libre). Unparseable Spanish dates are labelled, never fabricated.',
+    },
+    {
+      id: 'evidence-store',
+      name: 'Evidence Capture Store',
+      category: 'runtime',
+      state: hasValue(env.ENABLE_EVIDENCE_CAPTURE) ? 'configured' : 'disabled',
+      required: false,
+      env: ['ENABLE_EVIDENCE_CAPTURE', 'SENTRA_EVIDENCE_DIR'],
+      routes: ['/api/dr/evidence/capture', '/api/dr/evidence/export'],
+      message: hasValue(env.ENABLE_EVIDENCE_CAPTURE)
+        ? 'Local tamper-evident evidence store enabled (loopback-only; hash-chained JSONL + content-addressed blobs).'
+        : 'Evidence capture is disabled; set ENABLE_EVIDENCE_CAPTURE=true (loopback-only) to record citable snapshots.',
+    },
+    {
       id: 'osm-surveillance',
       name: 'OpenStreetMap Surveillance Positions',
       category: 'data',

@@ -20,7 +20,13 @@ assert.match(
 
 assert.match(
   pageSource,
-  /\(window as any\)\.openSentraIntel\s*=\s*\(entity:\s*any\)\s*=>\s*\{\s*if\s*\(entity\?\.callsign\s*\|\|\s*entity\?\.icao24\)\s*\{\s*openAircraftIntel\(entity\);/s,
+  /entity\?\.type\s*===\s*'vessel'\s*\|\|\s*entity\?\.mmsi/,
+  'Dashboard onEntityClick should open vessel intel before treating a radio callsign as an aircraft.',
+);
+
+assert.match(
+  pageSource,
+  /openAircraftIntel\(entity\);/,
   'Popup deep-dive bridge should reuse the same aircraft live intel opener.',
 );
 
@@ -36,10 +42,23 @@ assert.match(
   'SentraMap should pass aircraft clicks into the React entity click handler.',
 );
 
-assert.match(
-  mapSource,
-  /const\s+intelPayload\s*=\s*escapeAttr\(JSON\.stringify\(aircraftEntity\)\);/,
-  'Popup deep-dive payload should use the same aircraft entity payload as the direct map click.',
+assert.equal(
+  mapSource.includes('⚡ FLIGHTAWARE'),
+  false,
+  'Aircraft map clicks must not also open a floating map popup.',
 );
+
+const photoRoute = readFileSync(resolve(root, 'src/app/api/aircraft/photo/route.ts'), 'utf8');
+assert.match(photoRoute, /fetchAircraftPhoto/, 'Photo route should use the Planespotters-first lookup.');
+assert.match(photoRoute, /callsign/, 'Photo route should accept a GA callsign used as the tail number.');
+
+assert.match(mapSource, /showAllAircraft/, 'The flights layer must plot every aircraft category.');
+assert.match(mapSource, /activeLayers\.flights \|\| activeLayers\.private/);
+const layerSource = readFileSync(resolve(root, 'src/components/LayerPanel.tsx'), 'utf8');
+assert.match(layerSource, /All aircraft/);
+const panelSource = readFileSync(resolve(root, 'src/components/EntityGraphPanel.tsx'), 'utf8');
+assert.match(panelSource, /\/api\/aircraft\/lookup/);
+const lookupRoute = readFileSync(resolve(root, 'src/app/api/aircraft/lookup/route.ts'), 'utf8');
+assert.match(lookupRoute, /lookupAdsbAircraftByHex/);
 
 console.log('Aircraft intel wiring tests passed.');

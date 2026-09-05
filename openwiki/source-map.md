@@ -46,6 +46,6 @@ When adding a route, update the consuming fetch in `page.tsx`, the corresponding
 - `src/lib/provider-health.ts` is the canonical inventory of configured, keyless, disabled, missing-optional, and planned providers, and the source of the admin surface's managed-key allowlist.
 - `src/lib/ssrf-guard.ts` is the security boundary for active scanner target validation.
 - `src/lib/ais.ts` normalizes AIS messages used by maritime live state.
-- `src/lib/aircraft-intel.ts` and `src/lib/aircraft-photo.ts` support the aircraft entity workflow.
+- `src/lib/aircraft-intel.ts` and `src/lib/aircraft-photo.ts` support the aircraft entity workflow. Photos come from Planespotters by ICAO hex (Wikimedia is model-only fallback); GA tail numbers in the callsign are treated as the registration when OpenSky leaves REG empty.
 - `src/lib/ai-engine.ts` bounds and contextualizes feed data before Gemini analysis.
 - `src/lib/sdk/` contains SDK-facing types and adapter/client code; read route handlers with these modules because the current state is process-local.

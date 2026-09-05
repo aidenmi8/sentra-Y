@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "npm run test:branding && npm run test:iptv && npm run test:ais && npm run test:entity-intel && npm run test:provider-health && npm run test:opensky && npm run test:aircraft-intel && npm run test:aircraft-intel-wiring && npm run test:splash-timing && npm run test:default-map-view && npm run test:cables && npm run test:provider-admin && npm run test:cameras && npm run test:fl511 && npm run test:ny511",
+    "test": "npm run test:branding && npm run test:iptv && npm run test:ais && npm run test:entity-intel && npm run test:provider-health && npm run test:opensky && npm run test:aircraft-intel && npm run test:aircraft-intel-wiring && npm run test:splash-timing && npm run test:default-map-view && npm run test:cables && npm run test:provider-admin && npm run test:cameras && npm run test:fl511 && npm run test:ny511 && npm run test:dr-news && npm run test:dr-evidence && npm run test:typecheck",
+    "test:typecheck": "tsc --noEmit",
     "test:branding": "node scripts/check-branding.mjs",
     "test:iptv": "node scripts/test-iptv-parser.mjs",
     "test:ais": "node scripts/test-ais-parser.mjs",
@@ -23,7 +24,9 @@
     "brand:assets": "node scripts/generate-brand-assets.mjs",
     "test:cameras": "node scripts/test-worldwide-cameras.mjs",
     "test:fl511": "node scripts/test-fl511-cameras.mjs",
-    "test:ny511": "node scripts/test-ny511-cameras.mjs"
+    "test:ny511": "node scripts/test-ny511-cameras.mjs",
+    "test:dr-news": "node scripts/test-dr-news.mjs",
+    "test:dr-evidence": "node scripts/test-dr-evidence.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

@@ -29,6 +29,9 @@ const {
   resetOpenSkyTokenCacheForTests,
   fetchOpenSkyFlightData,
   fetchFlightData,
+  ADSB_COVERAGE_REGIONS,
+  adsbRegionCovers,
+  lookupAdsbAircraftByHex,
 } = providers;
 
 // ── Classification from the signals OpenSky actually publishes ──
@@ -78,8 +81,8 @@ assert.equal(normalized.speed_knots, 447);
 assert.equal(normalized.heading, 92);
 assert.equal(normalized.squawk, '1200');
 assert.equal(normalized.aircraft_category, 'heli');
-assert.equal(normalized.model, 'Unknown');
-assert.equal(normalized.registration, 'N/A');
+assert.equal(normalized.model, '');
+assert.equal(normalized.registration, '');
 assert.equal(normalized.source, 'OpenSky Network');
 assert.equal(normalized.feed_timestamp, '2024-03-09T16:00:10.000Z');
 
@@ -211,8 +214,8 @@ const bareOpenSky = normalizeOpenSkyState(
 );
 // Unenriched, OpenSky supplies no type code so this can only be 'commercial'.
 assert.equal(bareOpenSky.category, 'commercial');
-assert.equal(bareOpenSky.model, 'Unknown');
-assert.equal(bareOpenSky.registration, 'N/A');
+assert.equal(bareOpenSky.model, '');
+assert.equal(bareOpenSky.registration, 'N90XT', 'GA callsign is the tail number when OpenSky omits registration');
 
 const enriched = enrichWithAdsb(bareOpenSky, { hex: 'abc123', t: 'GLEX', r: 'N90XT', dbFlags: 0, nac_p: 9 });
 assert.equal(enriched.category, 'jet', 'type code from adsb.lol reclassifies the record');
@@ -296,6 +299,23 @@ const degraded = await fetchFlightData({
 });
 assert.equal(degraded.total, 1, 'adsb.lol being down must not empty the feed');
 assert.equal(degraded.commercial_flights[0].source, 'OpenSky Network');
+
+assert.ok(ADSB_COVERAGE_REGIONS.some((region) => region.id === 'caribbean'));
+assert.ok(
+  ADSB_COVERAGE_REGIONS.some((region) => adsbRegionCovers(region, 18.4036, -65.6440)),
+  'N25315 over Puerto Rico must fall inside an enrichment circle',
+);
+
+const lookedUp = await lookupAdsbAircraftByHex('a2653c', {
+  fetcher: async (url) => {
+    assert.match(String(url), /\/v2\/hex\/a2653c$/);
+    return new Response(JSON.stringify({
+      ac: [{ hex: 'a2653c', flight: 'N25315', r: 'N25315', t: 'TB9', squawk: '1200', nac_p: 8, lat: 18.4, lon: -65.64 }],
+    }), { status: 200 });
+  },
+});
+assert.equal(lookedUp?.r, 'N25315');
+assert.equal(lookedUp?.t, 'TB9');
 
 const routeSource = readFileSync(resolve(root, 'src/app/api/flights/route.ts'), 'utf8');
 assert.match(routeSource, /fetchFlightData/);

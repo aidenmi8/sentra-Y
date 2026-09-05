@@ -11,10 +11,18 @@ import {
 import {
   buildAircraftSnapshot,
   buildAircraftSourceLinks,
+  overlayAircraftLookup,
   type AircraftSnapshot,
   type AircraftTarget,
 } from '@/lib/aircraft-intel';
 import type { AircraftPhotoResult } from '@/lib/aircraft-photo';
+import {
+  buildVesselSnapshot,
+  buildVesselSourceLinks,
+  type VesselSnapshot,
+  type VesselTarget,
+} from '@/lib/vessel-intel';
+import type { VesselPhotoResult } from '@/lib/vessel-photo';
 
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
@@ -58,6 +66,7 @@ interface Props {
 }
 
 const AIRCRAFT_REFRESH_MS = 45_000;
+const VESSEL_REFRESH_MS = 10_000;
 
 function displayText(value: string | number | boolean | null | undefined, fallback = '--'): string {
   if (value === null || value === undefined || value === '') return fallback;
@@ -77,7 +86,7 @@ function formatHeading(value: number | null): string {
   return typeof value === 'number' ? `${Math.round(value)} DEG` : '--';
 }
 
-function formatCoordinates(snapshot: AircraftSnapshot): string {
+function formatCoordinates(snapshot: { lat: number | null; lng: number | null }): string {
   if (typeof snapshot.lat !== 'number' || typeof snapshot.lng !== 'number') return '--';
   return `${snapshot.lat.toFixed(4)}, ${snapshot.lng.toFixed(4)}`;
 }
@@ -104,6 +113,16 @@ function aircraftTargetFromEntity(entity: NonNullable<Props['entity']>): Aircraf
   };
 }
 
+function vesselTargetFromEntity(entity: NonNullable<Props['entity']>): VesselTarget {
+  const p = entity.properties || {};
+  return {
+    ...p,
+    mmsi: p.mmsi || entity.id,
+    imo: p.imo,
+    name: p.name || entity.label,
+  };
+}
+
 function AircraftMetric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) {
   return (
     <div className="min-w-0">
@@ -124,6 +143,9 @@ function EntityGraphPanel({ entity, onClose }: Props) {
   const [aircraftRefreshError, setAircraftRefreshError] = useState<string | null>(null);
   const [aircraftPhoto, setAircraftPhoto] = useState<AircraftPhotoResult | null>(null);
   const [aircraftPhotoLoading, setAircraftPhotoLoading] = useState(false);
+  const [vesselSnapshot, setVesselSnapshot] = useState<VesselSnapshot | null>(null);
+  const [vesselPhoto, setVesselPhoto] = useState<VesselPhotoResult | null>(null);
+  const [vesselPhotoLoading, setVesselPhotoLoading] = useState(false);
   const graphRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -199,11 +221,29 @@ function EntityGraphPanel({ entity, onClose }: Props) {
 
     const refreshAircraft = async () => {
       try {
-        const res = await fetch('/api/flights', { cache: 'no-store' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const feed = await res.json();
+        const icao = String(target.icao24 || '').trim();
+        const [feedRes, lookupRes] = await Promise.all([
+          fetch('/api/flights', { cache: 'no-store' }),
+          icao
+            ? fetch(`/api/aircraft/lookup?icao24=${encodeURIComponent(icao)}`, { cache: 'no-store' })
+            : Promise.resolve(null),
+        ]);
+        if (!feedRes.ok) throw new Error(`HTTP ${feedRes.status}`);
+        const feed = await feedRes.json();
+        const lookup = lookupRes && lookupRes.ok ? await lookupRes.json() : null;
         if (cancelled) return;
-        setAircraftSnapshot(prev => buildAircraftSnapshot(target, feed, prev));
+        setAircraftSnapshot((prev) => {
+          const next = buildAircraftSnapshot(target, feed, prev);
+          if (!lookup?.found) return next;
+          return overlayAircraftLookup(next, {
+            callsign: lookup.callsign,
+            registration: lookup.registration,
+            model: lookup.model,
+            squawk: lookup.squawk,
+            nac_p: lookup.nac_p,
+            icao24: lookup.icao24,
+          });
+        });
         setAircraftRefreshError(null);
       } catch (e) {
         if (cancelled) return;
@@ -230,6 +270,7 @@ function EntityGraphPanel({ entity, onClose }: Props) {
     if (aircraftSnapshot.registration) params.set('registration', aircraftSnapshot.registration);
     if (aircraftSnapshot.model) params.set('model', aircraftSnapshot.model);
     if (aircraftSnapshot.icao24) params.set('icao24', aircraftSnapshot.icao24);
+    if (aircraftSnapshot.callsign) params.set('callsign', aircraftSnapshot.callsign);
     if (!params.toString()) {
       queueMicrotask(() => setAircraftPhoto(null));
       return;
@@ -254,7 +295,74 @@ function EntityGraphPanel({ entity, onClose }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [aircraftSnapshot]);
+  }, [
+    aircraftSnapshot?.icao24,
+    aircraftSnapshot?.registration,
+    aircraftSnapshot?.model,
+    aircraftSnapshot?.callsign,
+  ]);
+
+  useEffect(() => {
+    if (!entity || entity.type !== 'vessel') {
+      queueMicrotask(() => {
+        setVesselSnapshot(null);
+        setVesselPhoto(null);
+      });
+      return;
+    }
+
+    let cancelled = false;
+    const target = vesselTargetFromEntity(entity);
+    queueMicrotask(() => {
+      if (!cancelled) setVesselSnapshot(buildVesselSnapshot(target));
+    });
+
+    const refreshVessel = async () => {
+      try {
+        const mmsi = String(target.mmsi || '').trim();
+        const url = mmsi ? `/api/maritime?mmsi=${encodeURIComponent(mmsi)}` : '/api/maritime';
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (cancelled) return;
+        const ships = data.ship ? [data.ship] : (data.ships || []);
+        setVesselSnapshot(buildVesselSnapshot(target, ships));
+      } catch {
+        if (!cancelled) setVesselSnapshot(buildVesselSnapshot(target));
+      }
+    };
+
+    refreshVessel();
+    const intervalId = window.setInterval(refreshVessel, VESSEL_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [entity]);
+
+  useEffect(() => {
+    if (!vesselSnapshot) {
+      queueMicrotask(() => setVesselPhoto(null));
+      return;
+    }
+    const params = new URLSearchParams();
+    if (vesselSnapshot.name) params.set('name', vesselSnapshot.name);
+    if (vesselSnapshot.imo) params.set('imo', vesselSnapshot.imo);
+    if (vesselSnapshot.mmsi) params.set('mmsi', vesselSnapshot.mmsi);
+    if (vesselSnapshot.type) params.set('type', vesselSnapshot.type);
+    if (!params.toString()) {
+      queueMicrotask(() => setVesselPhoto(null));
+      return;
+    }
+    let cancelled = false;
+    queueMicrotask(() => { if (!cancelled) setVesselPhotoLoading(true); });
+    fetch(`/api/vessel/photo?${params}`, { cache: 'force-cache' })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => { if (!cancelled) setVesselPhoto(data); })
+      .catch(() => { if (!cancelled) setVesselPhoto(null); })
+      .finally(() => { if (!cancelled) setVesselPhotoLoading(false); });
+    return () => { cancelled = true; };
+  }, [vesselSnapshot?.name, vesselSnapshot?.imo, vesselSnapshot?.mmsi, vesselSnapshot?.type]);
 
   const handleNodeClick = useCallback((node: any) => {
     const n = node as EntityNode;
@@ -337,6 +445,9 @@ function EntityGraphPanel({ entity, onClose }: Props) {
   const aircraftLinks = aircraftSnapshot ? buildAircraftSourceLinks(aircraftSnapshot) : [];
   const aircraftStatus = aircraftSnapshot?.stale ? '[ OFF-FEED ]' : '[ LIVE ADS-B ]';
   const aircraftStatusColor = aircraftSnapshot?.stale ? '#FFB000' : '#00E5FF';
+  const vesselLinks = vesselSnapshot ? buildVesselSourceLinks(vesselSnapshot) : [];
+  const vesselStatus = vesselSnapshot?.stale ? '[ OFF-FEED ]' : '[ LIVE AIS ]';
+  const vesselStatusColor = vesselSnapshot?.stale ? '#FFB000' : '#26C6DA';
 
   return (
     <AnimatePresence>
@@ -426,11 +537,11 @@ function EntityGraphPanel({ entity, onClose }: Props) {
             <div className="flex gap-4">
               <div className="w-[112px] h-[78px] shrink-0 border border-[var(--cyan-primary)]/30 bg-[var(--cyan-primary)]/5 overflow-hidden flex items-center justify-center">
                 {aircraftPhoto?.imageUrl ? (
-                  <div
-                    role="img"
-                    aria-label={`${aircraftSnapshot.registration || aircraftSnapshot.callsign || aircraftSnapshot.model || 'Aircraft'} photo`}
-                    className="w-full h-full bg-cover bg-center"
-                    style={{ backgroundImage: `url(${aircraftPhoto.imageUrl})` }}
+                  <img
+                    src={aircraftPhoto.imageUrl}
+                    alt={`${aircraftSnapshot.registration || aircraftSnapshot.callsign || aircraftSnapshot.model || 'Aircraft'} photo`}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover"
                   />
                 ) : (
                   <div className="flex flex-col items-center gap-1 text-[var(--cyan-primary)]/75">
@@ -507,8 +618,90 @@ function EntityGraphPanel({ entity, onClose }: Props) {
 
             {aircraftPhoto?.sourceUrl && (
               <div className="mt-2 text-[8px] font-mono text-white/35 truncate">
-                IMAGE: <a href={aircraftPhoto.sourceUrl} target="_blank" rel="noreferrer" className="text-white/50 hover:text-white">Wikimedia Commons</a>
-                {aircraftPhoto.license ? ` // ${aircraftPhoto.license}` : ''}
+                IMAGE: <a href={aircraftPhoto.sourceUrl} target="_blank" rel="noreferrer" className="text-white/50 hover:text-white">{aircraftPhoto.sourceName || 'Photo'}</a>
+                {aircraftPhoto.attribution ? ` // ${aircraftPhoto.attribution}` : aircraftPhoto.license ? ` // ${aircraftPhoto.license}` : ''}
+              </div>
+            )}
+          </div>
+        )}
+
+        {vesselSnapshot && entity?.type === 'vessel' && (
+          <div className="px-6 py-4 border-b border-[var(--border-primary)] bg-black/25 relative z-20">
+            <div className="flex gap-4">
+              <div className="w-[112px] h-[78px] shrink-0 border border-[#26C6DA]/30 bg-[#26C6DA]/5 overflow-hidden flex items-center justify-center">
+                {vesselPhoto?.imageUrl ? (
+                  <img
+                    src={vesselPhoto.imageUrl}
+                    alt={`${vesselSnapshot.name || vesselSnapshot.mmsi || 'Vessel'} photo`}
+                    referrerPolicy="no-referrer"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center gap-1 text-[#26C6DA]/75">
+                    {vesselPhotoLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ImageIcon className="w-5 h-5" />}
+                    <Ship className="w-6 h-6" />
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-[13px] font-mono font-bold text-white tracking-[0.14em] uppercase truncate">
+                      {displayText(vesselSnapshot.name || vesselSnapshot.mmsi)}
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[9px] font-mono tracking-widest uppercase">
+                      <span className="text-[var(--gold-primary)]/75">MMSI {displayText(vesselSnapshot.mmsi)}</span>
+                      <span className="text-white/45">IMO {displayText(vesselSnapshot.imo)}</span>
+                    </div>
+                  </div>
+                  <span
+                    className="shrink-0 text-[9px] font-mono font-bold tracking-widest border px-2 py-1"
+                    style={{ color: vesselStatusColor, borderColor: `${vesselStatusColor}80`, background: `${vesselStatusColor}12` }}
+                  >
+                    {vesselStatus}
+                  </span>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-x-4 gap-y-2">
+                  <AircraftMetric label="type" value={displayText(vesselSnapshot.type)} />
+                  <AircraftMetric label="speed" value={formatSpeed(vesselSnapshot.speed)} accent />
+                  <AircraftMetric label="heading" value={formatHeading(vesselSnapshot.heading)} />
+                  <AircraftMetric label="flag" value={displayText(vesselSnapshot.flag)} />
+                  <AircraftMetric label="callsign" value={displayText(vesselSnapshot.callsign)} />
+                  <AircraftMetric label="status" value={displayText(vesselSnapshot.navStatus)} />
+                  <AircraftMetric label="destination" value={displayText(vesselSnapshot.destination)} />
+                  <AircraftMetric label="eta" value={displayText(vesselSnapshot.eta)} />
+                  <AircraftMetric label="coords" value={formatCoordinates(vesselSnapshot)} />
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span className="text-[9px] font-mono text-white/45 tracking-widest uppercase">
+                LAST SEEN {formatFeedAge(vesselSnapshot.lastSeenAt)}
+              </span>
+              <span className="text-[9px] font-mono text-[var(--gold-primary)]/65 tracking-widest uppercase ml-auto">
+                {vesselSnapshot.source}
+              </span>
+            </div>
+            {vesselLinks.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {vesselLinks.map(link => (
+                  <a
+                    key={link.id}
+                    href={link.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 border border-[#26C6DA]/35 bg-[#26C6DA]/10 px-2 py-1 text-[9px] font-mono font-bold uppercase tracking-widest text-[#26C6DA] hover:bg-[#26C6DA]/20 transition-colors"
+                  >
+                    {link.label}
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                ))}
+              </div>
+            )}
+            {vesselPhoto?.sourceUrl && (
+              <div className="mt-2 text-[8px] font-mono text-white/35 truncate">
+                IMAGE: <a href={vesselPhoto.sourceUrl} target="_blank" rel="noreferrer" className="text-white/50 hover:text-white">{vesselPhoto.sourceName || 'Photo'}</a>
+                {vesselPhoto.attribution ? ` // ${vesselPhoto.attribution}` : ''}
               </div>
             )}
           </div>

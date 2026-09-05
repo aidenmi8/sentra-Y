@@ -67,7 +67,7 @@ const getLayerGroups = (theme: 'core' | 'ghost'): LayerGroup[] => {
     fullLabel: 'AVIATION',
     color: flightCom,
     layers: [
-      { key: 'flights', label: 'Commercial', icon: Plane, color: flightCom, dataKey: 'commercial_flights' },
+      { key: 'flights', label: 'All aircraft', icon: Plane, color: flightCom, dataKey: 'commercial_flights,private_flights,private_jets,military_flights' },
       { key: 'private', label: 'Private', icon: Plane, color: flightPriv, dataKey: 'private_flights' },
       { key: 'jets', label: 'Private Jets', icon: Plane, color: flightGov, dataKey: 'private_jets' },
       { key: 'military', label: 'Military', icon: Shield, color: flightMil, dataKey: 'military_flights' },

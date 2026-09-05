@@ -1,19 +1,20 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { fetchWikimediaAircraftPhoto } from '@/lib/aircraft-photo';
+import { fetchAircraftPhoto } from '@/lib/aircraft-photo';
 
 export async function GET(request: NextRequest) {
   const registration = request.nextUrl.searchParams.get('registration');
   const model = request.nextUrl.searchParams.get('model');
   const icao24 = request.nextUrl.searchParams.get('icao24');
+  const callsign = request.nextUrl.searchParams.get('callsign');
 
-  if (!registration && !model && !icao24) {
+  if (!registration && !model && !icao24 && !callsign) {
     return NextResponse.json(
-      { error: 'registration, model, or icao24 is required' },
+      { error: 'registration, model, icao24, or callsign is required' },
       { status: 400 },
     );
   }
 
-  const photo = await fetchWikimediaAircraftPhoto({ registration, model, icao24 });
+  const photo = await fetchAircraftPhoto({ registration, model, icao24, callsign });
 
   return NextResponse.json(photo, {
     headers: {
